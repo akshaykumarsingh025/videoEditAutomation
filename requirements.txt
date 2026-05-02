@@ -1,0 +1,6 @@
+moviepy==1.0.3
+numpy<2
+openai-whisper
+Pillow>=10,<13
+PyYAML>=6
+requests>=2.31

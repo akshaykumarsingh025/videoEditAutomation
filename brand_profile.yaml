@@ -1,0 +1,43 @@
+brand:
+  name: "Dr. Deepika"
+  primary_color: "#1A73E8"
+  accent_color: "#FF6D00"
+  bg_color: "#FFFFFF"
+  text_color: "#212121"
+
+fonts:
+  subtitle: "Poppins-Medium.ttf"
+  text_card: "Poppins-Bold.ttf"
+  lower_third: "Poppins-SemiBold.ttf"
+  subtitle_size: 42
+  text_card_size: 64
+  lower_third_size: 36
+
+watermark:
+  logo: "assets/templates/brand_logo.png"
+  opacity: 0.1
+  position: "bottom-right"
+  margin: 20
+
+lower_third:
+  template: "assets/templates/lower_third_base.png"
+  height: 80
+  animation: "slide_left"
+
+text_card:
+  template: "assets/templates/text_card_base.png"
+  animation: "fade"
+
+music:
+  default_track: "assets/music/background.mp3"
+  volume_under_speech: -30
+  volume_normal: -20
+  fade_out_seconds: 3
+
+export:
+  youtube_lufs: -14
+  default_resolution: "1920x1080"
+  draft_resolution: "854x480"
+  codec: "libx264"
+  preset: "medium"
+  crf: 23
