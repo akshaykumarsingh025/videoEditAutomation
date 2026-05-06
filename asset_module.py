@@ -30,10 +30,12 @@ comfyui_started_by_pipeline = False
 
 
 def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> dict:
-    comfyui_entries = [e for e in timeline_entries if e["action"] == "COMFYUI_PROMPT"]
+    comfyui_entries = [e for e in timeline_entries if e["action"] in ("COMFYUI_PROMPT", "BROLL_IMAGE")]
     if not comfyui_entries:
         logger.info("No ComfyUI images to generate")
         return {"generated": [], "failed": []}
+
+    _force_free_vram_for_comfyui()
 
     global comfyui_process, comfyui_started_by_pipeline
     comfyui_started_by_pipeline = False
@@ -64,11 +66,22 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
 
     for entry in comfyui_entries:
         entry_id = entry["id"]
-        prompt = entry["data"]
-        logger.info(f"Generating ComfyUI image for entry {entry_id}: {prompt[:60]}...")
+        raw_prompt = entry["data"]
+        is_broll = entry["action"] == "BROLL_IMAGE"
+
+        if is_broll:
+            prompt = raw_prompt
+            if "watercolor" not in prompt.lower():
+                prompt = f"{raw_prompt}, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+            if "no text" not in prompt.lower():
+                prompt = f"{prompt}, no text, no words, no letters, no watermark, no signature, no writing"
+        else:
+            prompt = raw_prompt
+
+        logger.info(f"Generating {'B-roll' if is_broll else 'ComfyUI'} image for entry {entry_id}: {prompt[:80]}...")
 
         try:
-            output_path = _generate_single_image(workflow_template, prompt, entry_id, asset_prefix)
+            output_path = _generate_single_image(workflow_template, prompt, entry_id, asset_prefix, is_broll=is_broll)
             if output_path:
                 generated.append({"id": entry_id, "path": str(output_path)})
             else:
@@ -145,8 +158,12 @@ def _start_comfyui():
         logger.error(f"ComfyUI directory not found: {COMFYUI_DIR}")
         return None
     try:
+        python_exe = COMFYUI_DIR.parent / "python_embeded" / "python.exe"
+        if not python_exe.exists():
+            python_exe = "python"
+
         proc = subprocess.Popen(
-            ["python", "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+            [str(python_exe), "main.py", "--listen", "127.0.0.1", "--port", "8188"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(COMFYUI_DIR),
@@ -188,14 +205,19 @@ def _stop_comfyui():
         comfyui_process = None
         comfyui_started_by_pipeline = False
         logger.info("ComfyUI stopped, VRAM freed")
+    else:
+        logger.info("ComfyUI was started externally or already stopped — skipping process kill")
+        logger.info("If ComfyUI is still running, it will hold VRAM. Stop it manually if needed.")
 
 
-def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset_prefix: str = "") -> Path | None:
+def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset_prefix: str = "", is_broll: bool = False) -> Path | None:
     workflow = copy.deepcopy(workflow_template)
 
     workflow["67"]["inputs"]["text"] = prompt
     workflow["69"]["inputs"]["seed"] = random.randint(0, 2**32 - 1)
     workflow["9"]["inputs"]["filename_prefix"] = f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}"
+
+    workflow["71"]["inputs"]["text"] = "text, words, letters, watermark, Chinese characters, Japanese text, Korean text, signature, logo, caption, title, subtitle, stamp, date, name, watermark text, any writing, any script, any alphabet"
 
     try:
         resp = requests.post(f"{COMFYUI_URL}/prompt", json={"prompt": workflow}, timeout=30)
@@ -207,7 +229,7 @@ def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset
         return None
 
     start = time.time()
-    max_wait = 300
+    max_wait = 600
     while time.time() - start < max_wait:
         try:
             hist_resp = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
@@ -217,35 +239,70 @@ def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset
                 status = hist_data[prompt_id].get("status", {})
                 if status.get("completed", False) or status.get("status_str") == "success":
                     outputs = hist_data[prompt_id].get("outputs", {})
-                    if "9" in outputs:
-                        images = outputs["9"].get("images", [])
-                        if images:
-                            img_info = images[0]
-                            filename = img_info["filename"]
-                            subfolder = img_info.get("subfolder", "")
+                    logger.info(f"ComfyUI outputs keys: {list(outputs.keys())}")
+                    
+                    image_data = None
+                    for node_id, node_output in outputs.items():
+                        if "images" in node_output and node_output["images"]:
+                            image_data = node_output
+                            image_node_id = node_id
+                            break
+                    
+                    if image_data:
+                        images = image_data["images"]
+                        img_info = images[0]
+                        filename = img_info["filename"]
+                        subfolder = img_info.get("subfolder", "")
+                        img_type = img_info.get("type", "output")
 
-                            comfyui_output = Path(workflow_template.get("_comfyui_output_dir", ""))
-                            if not comfyui_output.exists():
-                                for candidate in [
-                                    COMFYUI_DIR / "output",
-                                    Path.home() / "ComfyUI" / "output",
-                                ]:
-                                    if candidate.exists():
-                                        comfyui_output = candidate
-                                        break
+                        logger.info(f"ComfyUI image found: node={image_node_id}, file={filename}, subfolder={subfolder}, type={img_type}")
 
-                            src = comfyui_output / subfolder / filename
-                            dst = PATHS["gen_images"] / f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}.png"
+                        if img_type == "temp":
+                            comfyui_output = COMFYUI_DIR / "temp"
+                        else:
+                            output_candidates = [
+                                COMFYUI_DIR / "output",
+                                Path("D:/Software/ComfyUI_windows_portable/ComfyUI/output"),
+                                Path.home() / "ComfyUI" / "output",
+                            ]
 
-                            if src.exists():
-                                img = Image.open(src)
+                            comfyui_output = Path("")
+                            for candidate in output_candidates:
+                                if candidate.exists():
+                                    comfyui_output = candidate
+                                    logger.info(f"Found ComfyUI output dir: {comfyui_output}")
+                                    break
+
+                        if not comfyui_output.exists():
+                            logger.error(f"ComfyUI output directory not found. Tried: {[str(c) for c in output_candidates]}")
+                            return None
+
+                        src = comfyui_output / subfolder / filename
+                        dst = PATHS["gen_images"] / f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}.png"
+
+                        logger.info(f"Looking for ComfyUI output: {src}")
+                        if src.exists():
+                            img = Image.open(src)
+                            if is_broll:
+                                img = _crop_to_16_9(img, (1920, 1080))
+                            else:
                                 img = img.resize((1920, 1080), Image.LANCZOS)
-                                img.save(dst)
-                                logger.info(f"Image saved: {dst}")
-                                return dst
-
-                    logger.error(f"ComfyUI completed but no image in output for entry {entry_id}")
-                    return None
+                            img.save(dst)
+                            logger.info(f"Image saved: {dst}")
+                            return dst
+                        else:
+                            logger.error(f"ComfyUI image file not found at: {src}")
+                            logger.info(f"Listing ComfyUI output dir contents:")
+                            try:
+                                for f in comfyui_output.iterdir():
+                                    if f.is_file() and f.suffix in ('.png', '.jpg', '.webp'):
+                                        logger.info(f"  {f.name} ({f.stat().st_size // 1024} KB)")
+                            except Exception:
+                                pass
+                            return None
+                    else:
+                        logger.error(f"ComfyUI completed but no image data in outputs for entry {entry_id}. Outputs: {list(outputs.keys())}")
+                        return None
 
                 if status.get("status_str") == "error":
                     logger.error(f"ComfyUI generation error for entry {entry_id}: {status}")
@@ -320,15 +377,84 @@ def _create_text_card(entry: dict, asset_prefix: str = "") -> Path | None:
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    bg_color = _hex_to_rgba(BRAND["brand"]["primary_color"], 220)
-    draw.rounded_rectangle([(100, 300), (width - 100, height - 300)], radius=20, fill=bg_color)
+    style = BRAND.get("text_card_style", {})
+    bg_hex = style.get("bg_color", BRAND["brand"].get("card_bg_color", "#0D1B2A"))
+    accent_hex = style.get("accent_bar_color", BRAND["brand"].get("card_accent_color", "#E8734A"))
+    text_hex = style.get("text_color", BRAND["brand"].get("card_text_color", "#FFFFFF"))
+    sub_hex = style.get("subtext_color", BRAND["brand"].get("card_subtext_color", "#94A3B8"))
+    corner_r = style.get("corner_radius", 16)
+    pad_x = style.get("padding_x", 60)
+    pad_y = style.get("padding_y", 30)
+    border_w = style.get("border_width", 2)
+    border_hex = style.get("border_color", accent_hex)
 
     text = entry["data"]
     font_size = BRAND["fonts"]["text_card_size"]
     font = _load_font(BRAND["fonts"]["text_card"], font_size)
+    sub_font = _load_font(BRAND["fonts"]["text_card"], int(font_size * 0.45))
 
-    text_color = _hex_to_rgb(BRAND["brand"]["bg_color"])
-    _draw_wrapped_text(draw, text, font, text_color, width // 2, height // 2, width - 300)
+    lines = text.split("\n") if "\n" in text else [text]
+    main_text = lines[0]
+    sub_text = lines[1] if len(lines) > 1 else ""
+
+    main_bbox = draw.textbbox((0, 0), main_text, font=font)
+    main_tw = main_bbox[2] - main_bbox[0]
+    main_th = main_bbox[3] - main_bbox[1]
+
+    sub_tw, sub_th = 0, 0
+    if sub_text:
+        sub_bbox = draw.textbbox((0, 0), sub_text, font=sub_font)
+        sub_tw = sub_bbox[2] - sub_bbox[0]
+        sub_th = sub_bbox[3] - sub_bbox[1]
+
+    card_w = max(main_tw, sub_tw) + pad_x * 2
+    card_h = main_th + sub_th + pad_y * 3 + 10
+    card_w = max(card_w, 500)
+    card_h = max(card_h, 160)
+
+    cx = (width - card_w) // 2
+    cy = (height - card_h) // 2
+
+    bg_rgb = _hex_to_rgba(bg_hex, 225)
+    draw.rounded_rectangle(
+        [(cx, cy), (cx + card_w, cy + card_h)],
+        radius=corner_r,
+        fill=bg_rgb,
+    )
+
+    border_rgb = _hex_to_rgba(border_hex, 180)
+    draw.rounded_rectangle(
+        [(cx, cy), (cx + card_w, cy + card_h)],
+        radius=corner_r,
+        fill=None,
+        outline=border_rgb,
+        width=border_w,
+    )
+
+    accent_rgb = _hex_to_rgba(accent_hex, 255)
+    accent_bar_h = 5
+    draw.rounded_rectangle(
+        [(cx + corner_r, cy + card_h - accent_bar_h - 8), (cx + card_w - corner_r, cy + card_h - 8)],
+        radius=3,
+        fill=accent_rgb,
+    )
+
+    top_accent_w = 6
+    draw.rounded_rectangle(
+        [(cx, cy), (cx + top_accent_w, cy + card_h)],
+        radius=3,
+        fill=accent_rgb,
+    )
+
+    text_rgb = _hex_to_rgb(text_hex)
+    sub_rgb = _hex_to_rgb(sub_hex)
+
+    text_x = cx + pad_x
+    text_y = cy + pad_y
+    draw.text((text_x, text_y), main_text, fill=text_rgb, font=font)
+
+    if sub_text:
+        draw.text((text_x, text_y + main_th + 14), sub_text, fill=sub_rgb, font=sub_font)
 
     output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}card_{_entry_token(entry['id'])}.png"
     img.save(output_path)
@@ -337,27 +463,62 @@ def _create_text_card(entry: dict, asset_prefix: str = "") -> Path | None:
 
 
 def _create_lower_third(entry: dict, asset_prefix: str = "") -> Path | None:
-    width, height = 1920, 100
+    style = BRAND.get("lower_third_style", {})
+    bg_hex = style.get("bg_color", BRAND["brand"].get("card_bg_color", "#0D1B2A"))
+    accent_hex = style.get("accent_bar_color", BRAND["brand"].get("card_accent_color", "#E8734A"))
+    text_hex = style.get("text_color", BRAND["brand"].get("card_text_color", "#FFFFFF"))
+    sub_hex = style.get("subtext_color", BRAND["brand"].get("card_subtext_color", "#94A3B8"))
+    bar_height = style.get("height", 100)
+    corner_r = style.get("corner_radius", 8)
+    accent_w = style.get("accent_bar_width", 6)
+
+    width, height = 1920, bar_height + 30
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    bg_color = _hex_to_rgba(BRAND["brand"]["primary_color"], 200)
-    draw.rounded_rectangle([(0, 0), (width, height)], radius=10, fill=bg_color)
+    bar_y = 15
+    bg_rgb = _hex_to_rgba(bg_hex, 220)
+    draw.rounded_rectangle(
+        [(40, bar_y), (width - 40, bar_y + bar_height)],
+        radius=corner_r,
+        fill=bg_rgb,
+    )
 
-    accent_color = _hex_to_rgba(BRAND["brand"]["accent_color"], 255)
-    draw.rounded_rectangle([(0, 0), (8, height)], radius=4, fill=accent_color)
+    accent_rgb = _hex_to_rgba(accent_hex, 255)
+    draw.rounded_rectangle(
+        [(40, bar_y), (40 + accent_w, bar_y + bar_height)],
+        radius=3,
+        fill=accent_rgb,
+    )
+
+    bottom_accent_y = bar_y + bar_height - 4
+    draw.rounded_rectangle(
+        [(40 + accent_w, bottom_accent_y), (width - 40, bar_y + bar_height)],
+        radius=2,
+        fill=accent_rgb,
+    )
 
     text = entry["data"]
-    font_size = BRAND["fonts"]["lower_third_size"]
-    font = _load_font(BRAND["fonts"]["lower_third"], font_size)
+    lines = text.split("\n") if "\n" in text else [text]
+    main_text = lines[0]
+    sub_text = lines[1] if len(lines) > 1 else ""
 
-    text_color = _hex_to_rgb(BRAND["brand"]["bg_color"])
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    x = 30
-    y = (height - text_h) // 2
-    draw.text((x, y), text, fill=text_color, font=font)
+    main_font_size = BRAND["fonts"]["lower_third_size"]
+    main_font = _load_font(BRAND["fonts"]["lower_third"], main_font_size)
+    sub_font = _load_font(BRAND["fonts"]["lower_third"], int(main_font_size * 0.6))
+
+    text_rgb = _hex_to_rgb(text_hex)
+    sub_rgb = _hex_to_rgb(sub_hex)
+
+    x = 40 + accent_w + 20
+
+    if sub_text:
+        draw.text((x, bar_y + 14), main_text, fill=text_rgb, font=main_font)
+        draw.text((x, bar_y + 14 + main_font_size + 4), sub_text, fill=sub_rgb, font=sub_font)
+    else:
+        main_bbox = draw.textbbox((0, 0), main_text, font=main_font)
+        main_th = main_bbox[3] - main_bbox[1]
+        draw.text((x, bar_y + (bar_height - main_th) // 2), main_text, fill=text_rgb, font=main_font)
 
     output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}lower_third_{_entry_token(entry['id'])}.png"
     img.save(output_path)
@@ -424,3 +585,58 @@ def _entry_token(entry_id) -> str:
         return f"{int(entry_id):03d}"
     except (TypeError, ValueError):
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(entry_id))
+
+
+def _crop_to_16_9(img: Image.Image, target_size: tuple) -> Image.Image:
+    tw, th = target_size
+    target_ratio = tw / th
+    w, h = img.size
+    current_ratio = w / h
+
+    if current_ratio > target_ratio:
+        new_w = int(h * target_ratio)
+        left = (w - new_w) // 2
+        img = img.crop((left, 0, left + new_w, h))
+    elif current_ratio < target_ratio:
+        new_h = int(w / target_ratio)
+        top = (h - new_h) // 2
+        img = img.crop((0, top, w, top + new_h))
+
+    return img.resize(target_size, Image.LANCZOS)
+
+
+def _force_free_vram_for_comfyui():
+    import gc as _gc
+    import subprocess as _sp
+    import time as _time
+
+    logger.info("Force-freeing VRAM before ComfyUI starts...")
+
+    try:
+        result = _sp.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines()[1:]:
+                cols = line.strip().split()
+                if cols:
+                    model_name = cols[0]
+                    try:
+                        _sp.run(["ollama", "stop", model_name], timeout=15, capture_output=True)
+                        logger.info(f"Stopped Ollama model: {model_name}")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    _gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            vram = torch.cuda.memory_allocated(0) / (1024 ** 2)
+            logger.info(f"CUDA cache cleared for ComfyUI. VRAM allocated: {vram:.0f} MB")
+    except ImportError:
+        pass
+
+    _time.sleep(3)

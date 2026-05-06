@@ -1,32 +1,70 @@
 brand:
-  name: "Dr. Deepika"
-  primary_color: "#1A73E8"
-  accent_color: "#FF6D00"
+  name: "Dr. Deepika Singh"
+  tagline: "MD AIIMS | 15+ Yrs Exp | FCLS | MCCOG"
+  phone: "+91 85959 54095"
+  clinic: "F-11, South Extension Part 1, New Delhi"
+  primary_color: "#1B3A5C"
+  accent_color: "#E8734A"
   bg_color: "#FFFFFF"
-  text_color: "#212121"
+  text_color: "#1B3A5C"
+  card_bg_color: "#0D1B2A"
+  card_accent_color: "#E8734A"
+  card_text_color: "#FFFFFF"
+  card_subtext_color: "#94A3B8"
+  highlight_color: "#F59E0B"
 
 fonts:
   subtitle: "Poppins-Medium.ttf"
   text_card: "Poppins-Bold.ttf"
   lower_third: "Poppins-SemiBold.ttf"
   subtitle_size: 42
-  text_card_size: 64
+  text_card_size: 56
   lower_third_size: 36
 
-watermark:
-  logo: "assets/templates/brand_logo.png"
-  opacity: 0.1
-  position: "bottom-right"
-  margin: 20
+info_card:
+  enabled: true
+  position: "top-left"
+  width: 340
+  padding: 18
+  corner_radius: 14
+  bg_color: "#0A1628"
+  accent_color: "#E8734A"
+  text_color: "#FFFFFF"
+  subtext_color: "#CBD5E1"
+  border_color: "#E8734A"
+  lines:
+    - "Dr. Deepika Singh"
+    - "MD AIIMS | FCLS | MCCOG"
+    - "Sr. Gynecologist & Laparoscopic Surgeon"
+    - "15+ Yrs Exp | 20,000+ Patients"
+    - "Ph: +91 85959 54095"
+    - "South Extension-1, New Delhi"
 
-lower_third:
-  template: "assets/templates/lower_third_base.png"
-  height: 80
-  animation: "slide_left"
+text_card_style:
+  bg_color: "#0A1628"
+  accent_bar_color: "#E8734A"
+  text_color: "#FFFFFF"
+  subtext_color: "#CBD5E1"
+  corner_radius: 18
+  padding_x: 64
+  padding_y: 36
+  border_width: 2
+  border_color: "#E8734A"
 
-text_card:
-  template: "assets/templates/text_card_base.png"
-  animation: "fade"
+lower_third_style:
+  bg_color: "#0A1628"
+  accent_bar_color: "#E8734A"
+  text_color: "#FFFFFF"
+  subtext_color: "#CBD5E1"
+  height: 100
+  corner_radius: 10
+  accent_bar_width: 7
+
+broll_fx:
+  ken_burns: true
+  zoom_start: 1.0
+  zoom_end: 1.15
+  zoom_duration: "full"
 
 music:
   default_track: "assets/music/background.mp3"

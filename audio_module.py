@@ -1,6 +1,8 @@
 import json
 import logging
 import gc
+import subprocess
+import time
 from pathlib import Path
 
 from config import (
@@ -11,6 +13,39 @@ from config import (
 )
 
 logger = logging.getLogger("pipeline.audio")
+
+
+def _force_free_vram(next_phase: str = "next phase"):
+    logger.info(f"Freeing VRAM before loading {next_phase}...")
+
+    try:
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines()[1:]:
+                cols = line.strip().split()
+                if cols:
+                    model_name = cols[0]
+                    try:
+                        subprocess.run(["ollama", "stop", model_name], timeout=15, capture_output=True)
+                        logger.info(f"Stopped Ollama model: {model_name}")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            vram = torch.cuda.memory_allocated(0) / (1024 ** 2)
+            logger.info(f"CUDA cache cleared after Ollama stop. VRAM allocated: {vram:.0f} MB")
+    except ImportError:
+        pass
+
+    time.sleep(2)
 
 
 def extract_audio(video_path: str | Path) -> Path:
@@ -30,12 +65,7 @@ def extract_audio(video_path: str | Path) -> Path:
 
 
 def transcribe(audio_path: str | Path) -> dict:
-    import subprocess
-    try:
-        subprocess.run(["ollama", "stop", "gemma4:e4b", "gemma4:26b", "gemma4:31b-cloud"], timeout=15, capture_output=True)
-        logger.info("Stopped Ollama models to free VRAM for Whisper")
-    except Exception:
-        pass
+    _force_free_vram("Whisper")
 
     import whisper
 
@@ -180,8 +210,11 @@ def _unload_whisper(model):
     try:
         import torch
         if torch.cuda.is_available():
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
-            logger.info("CUDA cache cleared")
+            torch.cuda.synchronize()
+            vram = torch.cuda.memory_allocated(0) / (1024 ** 2)
+            logger.info(f"CUDA cache cleared. VRAM still allocated: {vram:.0f} MB")
     except ImportError:
         pass
 

@@ -19,21 +19,48 @@ You receive a Hinglish transcript with timestamps. Your job is to create a JSON 
 RULES:
 1. Output ONLY valid JSON. No markdown, no explanation, no code fences.
 2. All text content must be in Hinglish (Romanized Hindi) only.
-3. Use these action types ONLY: LOWER_THIRD, COMFYUI_PROMPT, WEB_GIF, TEXT_CARD, WATERMARK
+3. Use these action types ONLY: BROLL_IMAGE, LOWER_THIRD, TEXT_CARD
 4. Each timeline entry must have: id, time (HH:MM:SS), duration (seconds), action, data, position
-5. Optional field: fade ("in", "out", "in-out") for COMFYUI_PROMPT and TEXT_CARD
-6. LOWER_THIRD: Use for speaker introductions. Position: "bottom-left"
-7. COMFYUI_PROMPT: Detailed English prompts for AI image generation (medical/educational themes)
-8. WEB_GIF: Short search terms for reaction GIFs (e.g., "mind blown", "thumbs up")
-9. TEXT_CARD: Hinglish text for myth/fact cards, key takeaways. Position: "center"
-10. WATERMARK: Always include ONE entry at time "00:00:00" with duration 0 for persistent watermark
-11. Do NOT place overlays during the first 2 seconds of video
-12. Space overlays at least 5 seconds apart. Aim for one strong visual beat every 12-18 seconds, not constant popups.
-13. Make the first overlay a sharp hook or lower third after 00:00:02.500 when the transcript supports it.
-14. Prefer clean educational overlays over gimmicks. Use WEB_GIF sparingly (maximum 2) and only when it fits the tone.
-15. Do not invent medical claims. Visuals must support what the speaker actually says.
-16. Include a "hero_moments" array: 2-3 segments of 20-40 seconds each that would work as YouTube Shorts/Reels
-17. Include an "seo" object with: title (Hinglish), description (Hinglish, 2-3 sentences), tags (array of 8-12 Hinglish tags), chapters (array of {time, title})
+5. Optional field: fade ("in", "out", "in-out") — REQUIRED for BROLL_IMAGE (use "in-out")
+6. Optional field: fx — for BROLL_IMAGE, set fx: "ken_burns_in" (slow zoom in) or "ken_burns_out" (slow zoom out). Alternate between them.
+
+BROLL_IMAGE PROMPT RULES (CRITICAL — READ CAREFULLY):
+- This is the MOST IMPORTANT action. Use it whenever the speaker mentions a medical concept or topic.
+- The image will REPLACE the video FULL SCREEN while audio continues — like real B-roll editing.
+- KEEP PROMPTS SIMPLE, CONCRETE, AND PEOPLE-FOCUSED. The ZImage AI model CANNOT do abstract concepts, diagrams, infographics, or 3D renders.
+
+MANDATORY: Every BROLL_IMAGE prompt MUST describe a SCENE with a PERSON (woman/girl/female doctor/nurse/patient) doing something specific.
+NEVER generate prompts without a person. NEVER generate prompts for abstract concepts.
+
+TEMPLATE for every prompt: "[person description] [doing action] [in setting], [mood/atmosphere], soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+
+CONCRETE EXAMPLES OF GOOD PROMPTS:
+- "a young Indian woman sitting in a doctor's waiting room looking calm, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a female doctor in a white coat holding a vaccine vial and smiling reassuringly, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a pregnant Indian woman gently holding her belly with a peaceful smile, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a young woman lying on a medical bed while a female doctor examines her with care, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "an Indian woman patient talking to a female doctor across a desk in a cozy clinic, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a middle-aged Indian woman looking relieved after a health checkup, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a female doctor showing a medicine bottle to a woman patient and explaining softly, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a young Indian girl receiving an injection on her arm from a kind female nurse, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+
+NEVER USE THESE (THE MODEL CANNOT RENDER THEM):
+- "infographic", "diagram", "chart", "statistics", "3D animation", "cross-section", "anatomical illustration", "medical diagram", "virus particles", "molecular structure", "flowchart", "comparison table", "X-ray", "microscope view", "abstract representation", "screenshot", "UI", "app interface"
+
+DURATION: 10-20 seconds per BROLL_IMAGE. Keep the image on screen for the ENTIRE duration the speaker talks about that topic. Look at the SRT timestamps — if the speaker discusses HPV from 01:11 to 01:35, set duration to 24 seconds. NEVER cut an image short while the topic is still being discussed.
+Position: "center". Always set fade: "in-out". Set fx: "ken_burns_in" or "ken_burns_out" (alternate between them).
+Generate 8-14 BROLL_IMAGE entries per video — cover as many topic changes as possible.
+
+LOWER_THIRD: Use for speaker introductions only. Position: "bottom-left". Duration: 5-7 seconds.
+
+TEXT_CARD: Hinglish text for myth/fact cards and key takeaways. Make these IMPACTFUL — short punchy statements. Position: "center". Duration: 6-8 seconds.
+
+Do NOT place overlays during the first 3 seconds of video.
+Space overlays at least 2 seconds apart.
+Prefer BROLL_IMAGE over everything else — show the viewer what the doctor is talking about.
+Do not invent medical claims. Visuals must support what the speaker actually says.
+Include a "hero_moments" array: 2-3 segments of 20-40 seconds each that would work as YouTube Shorts/Reels
+Include an "seo" object with: title (Hinglish), description (Hinglish, 2-3 sentences), tags (array of 8-12 Hinglish tags), chapters (array of {time, title})
 
 OUTPUT FORMAT:
 {
@@ -238,8 +265,31 @@ def _parse_ollama_json(response: str) -> dict:
 
 
 def unload_ollama(model_name: str):
+    logger.info(f"Unloading Ollama model: {model_name}")
+
     try:
-        subprocess.run(["ollama", "stop", model_name], timeout=30, capture_output=True)
-        logger.info(f"Ollama model {model_name} stopped")
-    except Exception as e:
-        logger.warning(f"Could not stop Ollama model: {e}")
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines()[1:]:
+                cols = line.strip().split()
+                if cols:
+                    try:
+                        subprocess.run(["ollama", "stop", cols[0]], timeout=15, capture_output=True)
+                        logger.info(f"Stopped: {cols[0]}")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            vram = torch.cuda.memory_allocated(0) / (1024 ** 2)
+            logger.info(f"VRAM after Ollama unload: {vram:.0f} MB")
+    except ImportError:
+        pass

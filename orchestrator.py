@@ -1,9 +1,12 @@
 import argparse
 import json
+import os
 import sys
 import time
 import logging
 from pathlib import Path
+
+os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
 
 from config import (
     PATHS,

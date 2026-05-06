@@ -4,6 +4,8 @@ import glob
 import subprocess
 from pathlib import Path
 
+os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+
 BASE_DIR = Path(__file__).parent.resolve()
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
@@ -112,8 +114,68 @@ def type_path():
     return path
 
 
+def pick_model():
+    print()
+    print("  ============================================================")
+    print("   SELECT AI DIRECTOR MODEL")
+    print("  ============================================================")
+    print()
+
+    try:
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            print("  Could not read Ollama models. Using default.")
+            input("  Press Enter to continue...")
+            return None
+
+        models = []
+        for line in result.stdout.splitlines()[1:]:
+            line = line.strip()
+            if not line:
+                continue
+            cols = line.split()
+            if len(cols) >= 3:
+                name = cols[0]
+                size = cols[2]
+                kind = "cloud" if size == "-" or "cloud" in name.lower() else "local"
+                models.append({"name": name, "size": size, "kind": kind})
+
+        if not models:
+            print("  No Ollama models found. Pull a model first.")
+            input("  Press Enter to continue...")
+            return None
+
+        for i, m in enumerate(models, 1):
+            print(f"   [{i}] {m['name']}  ({m['kind']}, {m['size']})")
+
+        print()
+        sel = input("  Select model number (or press Enter for default): ").strip()
+
+        if sel.isdigit():
+            idx = int(sel) - 1
+            if 0 <= idx < len(models):
+                model_name = models[idx]["name"]
+                print(f"  Selected: {model_name}")
+                return model_name
+
+        print("  Using default model")
+        return None
+
+    except FileNotFoundError:
+        print("  Ollama not found. Install it first.")
+        input("  Press Enter to continue...")
+        return None
+    except Exception as e:
+        print(f"  Error: {e}")
+        input("  Press Enter to continue...")
+        return None
+
+
 def run_pipeline(filepath, extra_args=None):
+    model = pick_model()
     cmd = [sys.executable, str(BASE_DIR / "orchestrator.py"), "--input", filepath]
+    if model:
+        cmd.extend(["--model", model, "--no-interactive"])
     if extra_args:
         cmd.extend(extra_args)
 

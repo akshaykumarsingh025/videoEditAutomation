@@ -3,9 +3,19 @@ import logging
 import os
 import re
 import subprocess
+import warnings
+import math
 from pathlib import Path
 
-os.environ.setdefault("IMAGEMAGICK_BINARY", r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe")
+warnings.filterwarnings("ignore", category=ResourceWarning)
+os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+
+try:
+    import moviepy.config
+    moviepy.config.IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+    moviepy.config_defaults.IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+except Exception:
+    pass
 
 from moviepy.editor import (
     VideoFileClip,
@@ -15,8 +25,8 @@ from moviepy.editor import (
     TextClip,
     concatenate_videoclips,
 )
-from moviepy.video.fx.all import colorx, crop, loop as video_loop
-from PIL import Image
+from moviepy.video.fx.all import colorx, crop, loop as video_loop, resize
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from config import PATHS, BRAND, EXPORT_PROFILES, DRAFT_RESOLUTION
 
@@ -50,9 +60,9 @@ def composite_video(
     video = _prepare_base_video(video, target_w, target_h, profile)
 
     clips = [video]
-    clips.extend(_create_subtitle_clips(video, srt_path, draft))
     clips.extend(_create_timeline_clips(video, timeline_data, draft, asset_prefix))
     clips.extend(_create_watermark_clip(video, timeline_data, draft))
+    clips.extend(_create_info_card_clip(video, draft))
 
     logger.info("Compositing all layers...")
     final = CompositeVideoClip(clips, size=(target_w, target_h))
@@ -241,9 +251,25 @@ def _create_timeline_clips(video, timeline_data, draft, asset_prefix=""):
         duration = entry.get("duration", 3)
         position = entry.get("position", "center")
         fade = entry.get("fade")
+        fx = entry.get("fx", "")
 
         try:
-            if entry["action"] == "COMFYUI_PROMPT":
+            if entry["action"] == "BROLL_IMAGE":
+                img_path = _find_asset(PATHS["gen_images"], asset_prefix, "gen", entry["id"], [".png"])
+                if not img_path.exists():
+                    if not draft:
+                        logger.warning(f"B-roll image not found: {img_path}")
+                    continue
+
+                clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
+                clip = clip.resize((video.w, video.h))
+                clip = clip.set_position(("center", "center"))
+                clip = _apply_fade(clip, fade or "in-out", duration)
+
+                if fx.startswith("ken_burns"):
+                    clip = _apply_ken_burns(clip, fx, duration)
+
+            elif entry["action"] == "COMFYUI_PROMPT":
                 img_path = _find_asset(PATHS["gen_images"], asset_prefix, "gen", entry["id"], [".png"])
                 if not img_path.exists():
                     if not draft:
@@ -332,6 +358,138 @@ def _create_watermark_clip(video, timeline_data, draft):
         return []
 
 
+def _apply_ken_burns(clip, fx_type, duration):
+    broll_fx = BRAND.get("broll_fx", {})
+    zoom_start = broll_fx.get("zoom_start", 1.0)
+    zoom_end = broll_fx.get("zoom_end", 1.15)
+
+    if "out" in fx_type:
+        zoom_start, zoom_end = zoom_end, zoom_start
+
+    def zoom_func(t):
+        progress = t / max(duration, 0.01)
+        return zoom_start + (zoom_end - zoom_start) * progress
+
+    clip = clip.resize(zoom_func)
+    return clip
+
+
+def _create_info_card_clip(video, draft):
+    info_cfg = BRAND.get("info_card", {})
+    if not info_cfg.get("enabled", False):
+        return []
+
+    try:
+        card_img = _generate_info_card_image(video.w, video.h, draft)
+        clip = ImageClip(str(card_img)).set_duration(video.duration).set_start(0)
+        return [clip]
+    except Exception as e:
+        logger.error(f"Failed to create info card clip: {e}")
+        return []
+
+
+def _generate_info_card_image(video_w, video_h, draft):
+    info_cfg = BRAND.get("info_card", {})
+    card_w = info_cfg.get("width", 320)
+    padding = info_cfg.get("padding", 16)
+    corner_r = info_cfg.get("corner_radius", 12)
+    bg_hex = info_cfg.get("bg_color", "#0D1B2A")
+    accent_hex = info_cfg.get("accent_color", "#E8734A")
+    text_hex = info_cfg.get("text_color", "#FFFFFF")
+    sub_hex = info_cfg.get("subtext_color", "#94A3B8")
+    border_hex = info_cfg.get("border_color", "#E8734A")
+    lines = info_cfg.get("lines", [])
+    position = info_cfg.get("position", "top-left")
+
+    if draft:
+        scale = DRAFT_RESOLUTION[0] / 1920
+        card_w = int(card_w * scale)
+        padding = int(padding * scale)
+
+    scale_factor = video_w / 1920
+    card_w = int(card_w * scale_factor)
+    padding = int(padding * scale_factor)
+
+    font_name_size = max(14, int(22 * scale_factor))
+    font_line_size = max(11, int(15 * scale_factor))
+
+    try:
+        font_path = PATHS["fonts"] / BRAND["fonts"].get("lower_third", "Poppins-SemiBold.ttf")
+        font_name = ImageFont.truetype(str(font_path), font_name_size) if font_path.exists() else ImageFont.load_default()
+        font_line = ImageFont.truetype(str(font_path), font_line_size) if font_path.exists() else ImageFont.load_default()
+    except Exception:
+        font_name = ImageFont.load_default()
+        font_line = ImageFont.load_default()
+
+    temp_img = Image.new("RGBA", (card_w, 100), (0, 0, 0, 0))
+    temp_draw = ImageDraw.Draw(temp_img)
+    max_text_w = 0
+    total_text_h = padding
+    line_heights = []
+
+    for i, line in enumerate(lines):
+        f = font_name if i == 0 else font_line
+        bbox = temp_draw.textbbox((0, 0), line, font=f)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        max_text_w = max(max_text_w, tw)
+        line_heights.append(th + 6)
+        total_text_h += th + 6
+
+    total_text_h += padding
+    card_h = total_text_h + padding
+    card_w = max(card_w, max_text_w + padding * 2)
+
+    canvas = Image.new("RGBA", (video_w, video_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    if position == "top-left":
+        cx, cy = 20, 20
+    elif position == "top-right":
+        cx, cy = video_w - card_w - 20, 20
+    elif position == "bottom-left":
+        cx, cy = 20, video_h - card_h - 20
+    else:
+        cx, cy = 20, 20
+
+    bg_rgb = _hex_to_rgb(bg_hex)
+    draw.rounded_rectangle(
+        [(cx, cy), (cx + card_w, cy + card_h)],
+        radius=corner_r,
+        fill=bg_rgb + (210,),
+    )
+
+    border_rgb = _hex_to_rgb(border_hex)
+    draw.rounded_rectangle(
+        [(cx, cy), (cx + card_w, cy + card_h)],
+        radius=corner_r,
+        fill=None,
+        outline=border_rgb + (160,),
+        width=2,
+    )
+
+    accent_rgb = _hex_to_rgb(accent_hex)
+    draw.rounded_rectangle(
+        [(cx, cy), (cx + 5, cy + card_h)],
+        radius=3,
+        fill=accent_rgb + (255,),
+    )
+
+    text_rgb = _hex_to_rgb(text_hex)
+    sub_rgb = _hex_to_rgb(sub_hex)
+
+    y_offset = cy + padding
+    for i, line in enumerate(lines):
+        f = font_name if i == 0 else font_line
+        color = text_rgb if i == 0 else sub_rgb
+        draw.text((cx + padding + 6, y_offset), line, fill=color, font=f)
+        y_offset += line_heights[i]
+
+    output_path = PATHS["temp"] / "info_card_overlay.png"
+    canvas.save(output_path)
+    return output_path
+
+
 def _apply_position(clip, video, position, margin=0):
     if margin == 0:
         margin = 20
@@ -398,7 +556,7 @@ def _add_music(final_clip, input_video, draft):
 
 def _normalize_audio(output_path):
     logger.info("Normalizing audio loudness to -14 LUFS...")
-    temp_path = output_path.with_suffix(".normalized.mp4")
+    temp_path = output_path.parent / f"{output_path.stem}_normalized{output_path.suffix}"
 
     try:
         cmd = [
@@ -422,6 +580,12 @@ def _normalize_audio(output_path):
     except Exception as e:
         logger.warning(f"Audio normalization error: {e}")
 
+    if output_path.exists():
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"Final output: {output_path} ({size_mb:.1f} MB)")
+    else:
+        logger.error(f"Output file missing after normalization: {output_path}")
+
 
 def _time_to_sec(time_str):
     parts = time_str.split(":")
@@ -430,6 +594,11 @@ def _time_to_sec(time_str):
     elif len(parts) == 2:
         return int(parts[0]) * 60 + float(parts[1])
     return float(time_str)
+
+
+def _hex_to_rgb(hex_color: str) -> tuple:
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def _srt_to_sec(time_str):
