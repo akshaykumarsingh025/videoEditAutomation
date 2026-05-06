@@ -53,7 +53,7 @@ Generate 8-14 BROLL_IMAGE entries per video — cover as many topic changes as p
 
 LOWER_THIRD: Use for speaker introductions only. Position: "bottom-left". Duration: 5-7 seconds.
 
-TEXT_CARD: Hinglish text for myth/fact cards and key takeaways. Make these IMPACTFUL — short punchy statements. Position: "center". Duration: 6-8 seconds.
+TEXT_CARD: Hinglish text for myth/fact cards, key takeaways, important warnings, statistics, and emphasis moments. Use these VERY FREQUENTLY — every time the speaker says something important, surprising, or worth remembering, add a TEXT_CARD. Generate 8-15 TEXT_CARD entries per video. Make these IMPACTFUL — short punchy Hinglish statements. Position: "center". Duration: 6-8 seconds. Examples: "HPV Vaccine = Cancer Se Bachav!", "Har Mahila Ko Pap Smear Zaroori Hai", "9-45 Saal Ki Mahilayein Vaccine Le Sakti Hain", "Early Detection Saves Lives!".
 
 Do NOT place overlays during the first 3 seconds of video.
 Space overlays at least 2 seconds apart.

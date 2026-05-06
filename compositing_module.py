@@ -390,73 +390,92 @@ def _create_info_card_clip(video, draft):
 
 def _generate_info_card_image(video_w, video_h, draft):
     info_cfg = BRAND.get("info_card", {})
-    card_w = info_cfg.get("width", 320)
-    padding = info_cfg.get("padding", 16)
-    corner_r = info_cfg.get("corner_radius", 12)
-    bg_hex = info_cfg.get("bg_color", "#0D1B2A")
+    card_w = info_cfg.get("width", 520)
+    padding = info_cfg.get("padding", 28)
+    corner_r = info_cfg.get("corner_radius", 16)
+    bg_hex = info_cfg.get("bg_color", "#0A1628")
     accent_hex = info_cfg.get("accent_color", "#E8734A")
     text_hex = info_cfg.get("text_color", "#FFFFFF")
-    sub_hex = info_cfg.get("subtext_color", "#94A3B8")
+    sub_hex = info_cfg.get("subtext_color", "#D1D5DB")
     border_hex = info_cfg.get("border_color", "#E8734A")
+    border_width = info_cfg.get("border_width", 2)
+    accent_bar_w = info_cfg.get("accent_bar_width", 8)
     lines = info_cfg.get("lines", [])
     position = info_cfg.get("position", "top-left")
 
-    if draft:
-        scale = DRAFT_RESOLUTION[0] / 1920
-        card_w = int(card_w * scale)
-        padding = int(padding * scale)
+    name_font_base = info_cfg.get("name_font_size", 42)
+    title_font_base = info_cfg.get("title_font_size", 26)
+    line_font_base = info_cfg.get("line_font_size", 24)
+    phone_font_base = info_cfg.get("phone_font_size", 28)
 
     scale_factor = video_w / 1920
+    if draft:
+        scale_factor = DRAFT_RESOLUTION[0] / 1920
+
     card_w = int(card_w * scale_factor)
     padding = int(padding * scale_factor)
 
-    font_name_size = max(14, int(22 * scale_factor))
-    font_line_size = max(11, int(15 * scale_factor))
+    name_font_size = max(16, int(name_font_base * scale_factor))
+    title_font_size = max(12, int(title_font_base * scale_factor))
+    line_font_size = max(11, int(line_font_base * scale_factor))
+    phone_font_size = max(13, int(phone_font_base * scale_factor))
 
-    try:
-        font_path = PATHS["fonts"] / BRAND["fonts"].get("lower_third", "Poppins-SemiBold.ttf")
-        font_name = ImageFont.truetype(str(font_path), font_name_size) if font_path.exists() else ImageFont.load_default()
-        font_line = ImageFont.truetype(str(font_path), font_line_size) if font_path.exists() else ImageFont.load_default()
-    except Exception:
-        font_name = ImageFont.load_default()
-        font_line = ImageFont.load_default()
+    bold_font_path = PATHS["fonts"] / BRAND["fonts"].get("text_card", "Poppins-Bold.ttf")
+    semi_font_path = PATHS["fonts"] / BRAND["fonts"].get("lower_third", "Poppins-SemiBold.ttf")
 
-    temp_img = Image.new("RGBA", (card_w, 100), (0, 0, 0, 0))
+    font_name = _load_font_safe(bold_font_path, name_font_size)
+    font_title = _load_font_safe(semi_font_path, title_font_size)
+    font_line = _load_font_safe(semi_font_path, line_font_size)
+    font_phone = _load_font_safe(bold_font_path, phone_font_size)
+
+    line_fonts = [
+        font_name,
+        font_title,
+        font_line,
+        font_line,
+        font_phone,
+        font_line,
+    ]
+    while len(line_fonts) < len(lines):
+        line_fonts.append(font_line)
+
+    temp_img = Image.new("RGBA", (max(card_w, 200), 200), (0, 0, 0, 0))
     temp_draw = ImageDraw.Draw(temp_img)
     max_text_w = 0
     total_text_h = padding
     line_heights = []
 
     for i, line in enumerate(lines):
-        f = font_name if i == 0 else font_line
+        f = line_fonts[i]
         bbox = temp_draw.textbbox((0, 0), line, font=f)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
         max_text_w = max(max_text_w, tw)
-        line_heights.append(th + 6)
-        total_text_h += th + 6
+        gap = 14 if i == 0 else 8
+        line_heights.append(th + gap)
+        total_text_h += th + gap
 
     total_text_h += padding
     card_h = total_text_h + padding
-    card_w = max(card_w, max_text_w + padding * 2)
+    card_w = max(card_w, max_text_w + padding * 2 + 20)
 
     canvas = Image.new("RGBA", (video_w, video_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
 
     if position == "top-left":
-        cx, cy = 20, 20
+        cx, cy = 24, 24
     elif position == "top-right":
-        cx, cy = video_w - card_w - 20, 20
+        cx, cy = video_w - card_w - 24, 24
     elif position == "bottom-left":
-        cx, cy = 20, video_h - card_h - 20
+        cx, cy = 24, video_h - card_h - 24
     else:
-        cx, cy = 20, 20
+        cx, cy = 24, 24
 
     bg_rgb = _hex_to_rgb(bg_hex)
     draw.rounded_rectangle(
         [(cx, cy), (cx + card_w, cy + card_h)],
         radius=corner_r,
-        fill=bg_rgb + (210,),
+        fill=bg_rgb + (225,),
     )
 
     border_rgb = _hex_to_rgb(border_hex)
@@ -464,30 +483,53 @@ def _generate_info_card_image(video_w, video_h, draft):
         [(cx, cy), (cx + card_w, cy + card_h)],
         radius=corner_r,
         fill=None,
-        outline=border_rgb + (160,),
-        width=2,
+        outline=border_rgb + (180,),
+        width=border_width,
     )
 
     accent_rgb = _hex_to_rgb(accent_hex)
     draw.rounded_rectangle(
-        [(cx, cy), (cx + 5, cy + card_h)],
-        radius=3,
+        [(cx, cy), (cx + accent_bar_w, cy + card_h)],
+        radius=4,
         fill=accent_rgb + (255,),
     )
 
     text_rgb = _hex_to_rgb(text_hex)
     sub_rgb = _hex_to_rgb(sub_hex)
+    accent_text_rgb = _hex_to_rgb(accent_hex)
 
     y_offset = cy + padding
     for i, line in enumerate(lines):
-        f = font_name if i == 0 else font_line
-        color = text_rgb if i == 0 else sub_rgb
-        draw.text((cx + padding + 6, y_offset), line, fill=color, font=f)
+        f = line_fonts[i]
+        if i == 0:
+            color = text_rgb
+        elif i == len(lines) - 2:
+            color = accent_text_rgb
+        else:
+            color = sub_rgb
+        draw.text((cx + padding + accent_bar_w + 8, y_offset), line, fill=color, font=f)
         y_offset += line_heights[i]
 
     output_path = PATHS["temp"] / "info_card_overlay.png"
     canvas.save(output_path)
     return output_path
+
+
+def _load_font_safe(font_path, size):
+    if font_path.exists():
+        try:
+            return ImageFont.truetype(str(font_path), size)
+        except Exception:
+            pass
+    for sys_font in ["arial.ttf", "Arial.ttf", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/calibri.ttf"]:
+        try:
+            return ImageFont.truetype(sys_font, size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except OSError:
+        return ImageFont.load_default()
 
 
 def _apply_position(clip, video, position, margin=0):

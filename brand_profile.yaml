@@ -24,20 +24,26 @@ fonts:
 info_card:
   enabled: true
   position: "top-left"
-  width: 340
-  padding: 18
-  corner_radius: 14
+  width: 520
+  padding: 28
+  corner_radius: 16
   bg_color: "#0A1628"
   accent_color: "#E8734A"
   text_color: "#FFFFFF"
-  subtext_color: "#CBD5E1"
+  subtext_color: "#D1D5DB"
   border_color: "#E8734A"
+  border_width: 2
+  accent_bar_width: 8
+  name_font_size: 42
+  title_font_size: 26
+  line_font_size: 24
+  phone_font_size: 28
   lines:
     - "Dr. Deepika Singh"
     - "MD AIIMS | FCLS | MCCOG"
     - "Sr. Gynecologist & Laparoscopic Surgeon"
-    - "15+ Yrs Exp | 20,000+ Patients"
-    - "Ph: +91 85959 54095"
+    - "15+ Yrs Experience | 20,000+ Patients"
+    - "+91 85959 54095"
     - "South Extension-1, New Delhi"
 
 text_card_style:
