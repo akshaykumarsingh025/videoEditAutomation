@@ -47,13 +47,13 @@ CONCRETE EXAMPLES OF GOOD PROMPTS:
 NEVER USE THESE (THE MODEL CANNOT RENDER THEM):
 - "infographic", "diagram", "chart", "statistics", "3D animation", "cross-section", "anatomical illustration", "medical diagram", "virus particles", "molecular structure", "flowchart", "comparison table", "X-ray", "microscope view", "abstract representation", "screenshot", "UI", "app interface"
 
-DURATION: 10-20 seconds per BROLL_IMAGE. Keep the image on screen for the ENTIRE duration the speaker talks about that topic. Look at the SRT timestamps — if the speaker discusses HPV from 01:11 to 01:35, set duration to 24 seconds. NEVER cut an image short while the topic is still being discussed.
+DURATION: 5-6 seconds per BROLL_IMAGE. Keep images short and impactful — change them frequently to keep viewer engaged.
 Position: "center". Always set fade: "in-out". Set fx: "ken_burns_in" or "ken_burns_out" (alternate between them).
 Generate 8-14 BROLL_IMAGE entries per video — cover as many topic changes as possible.
 
 LOWER_THIRD: Use for speaker introductions only. Position: "bottom-left". Duration: 5-7 seconds.
 
-TEXT_CARD: Hinglish text for myth/fact cards, key takeaways, important warnings, statistics, and emphasis moments. Use these VERY FREQUENTLY — every time the speaker says something important, surprising, or worth remembering, add a TEXT_CARD. Generate 8-15 TEXT_CARD entries per video. Make these IMPACTFUL — short punchy Hinglish statements. Position: "center". Duration: 6-8 seconds. Examples: "HPV Vaccine = Cancer Se Bachav!", "Har Mahila Ko Pap Smear Zaroori Hai", "9-45 Saal Ki Mahilayein Vaccine Le Sakti Hain", "Early Detection Saves Lives!".
+TEXT_CARD: Quick pop-up overlays for key points the doctor mentions. Use these VERY FREQUENTLY — every time the doctor says a specific point like "pehla problem hai periods ka pain" or "HPV ka matlab hai Human Papillomavirus", add a quick 3-4 second TEXT_CARD that pops in and out fast. These should feel like quick emphasis pops, not lingering cards. Generate 10-20 TEXT_CARD entries per video. Short punchy Hinglish statements. Position: "center". Duration: 3-4 seconds. Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain", "Pap Smear Zaroori Hai!".
 
 Do NOT place overlays during the first 3 seconds of video.
 Space overlays at least 2 seconds apart.

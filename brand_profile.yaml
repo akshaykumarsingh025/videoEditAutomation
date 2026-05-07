@@ -21,6 +21,12 @@ fonts:
   text_card_size: 56
   lower_third_size: 36
 
+subtitle_style:
+  bg_color: "rgba(0,0,0,0.7)"
+  text_color: "#FFFFFF"
+  highlight_color: "#E8734A"
+  y_position_ratio: 0.84
+
 info_card:
   enabled: true
   position: "top-left"

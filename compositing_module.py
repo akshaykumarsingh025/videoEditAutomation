@@ -63,6 +63,7 @@ def composite_video(
     clips.extend(_create_timeline_clips(video, timeline_data, draft, asset_prefix))
     clips.extend(_create_watermark_clip(video, timeline_data, draft))
     clips.extend(_create_info_card_clip(video, draft))
+    clips.extend(_create_subtitle_clips(video, srt_path, draft, asset_prefix))
 
     logger.info("Compositing all layers...")
     final = CompositeVideoClip(clips, size=(target_w, target_h))
@@ -182,32 +183,66 @@ def _apply_silence_cuts(video, silence_cuts):
     return video
 
 
-def _create_subtitle_clips(video, srt_path, draft):
-    if not srt_path.exists():
+def _create_subtitle_clips(video, srt_path, draft, asset_prefix=""):
+    if not srt_path or not Path(srt_path).exists():
         logger.warning(f"SRT file not found: {srt_path}")
         return []
 
-    srt_content = srt_path.read_text(encoding="utf-8")
+    words_path = PATHS["temp"] / f"{Path(srt_path).stem.replace('_trimmed', '')}_words.json"
+    words_data = None
+    if words_path.exists():
+        try:
+            words_data = json.loads(words_path.read_text(encoding="utf-8"))
+            logger.info(f"Loaded word-level data for karaoke subtitles: {len(words_data)} words")
+        except Exception as e:
+            logger.warning(f"Failed to load words data: {e}")
+
+    srt_content = Path(srt_path).read_text(encoding="utf-8")
     blocks = srt_content.strip().split("\n\n")
 
-    clips = []
-    font_path = PATHS["fonts"] / BRAND["fonts"]["subtitle"]
-    font_size = BRAND["fonts"]["subtitle_size"]
+    scale = video.w / 1920
     if draft:
-        font_size = int(font_size * DRAFT_RESOLUTION[1] / 1080)
+        scale = DRAFT_RESOLUTION[0] / 1920
 
-    for block in blocks:
+    font_size = max(18, int(BRAND["fonts"]["subtitle_size"] * scale))
+
+    font_name = "Arial"
+    for candidate in [
+        PATHS["fonts"] / BRAND["fonts"].get("subtitle", "Poppins-Medium.ttf"),
+        PATHS["fonts"] / "Poppins-Medium.ttf",
+        Path("C:/Windows/Fonts/segoeui.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+    ]:
+        if candidate.exists():
+            font_name = str(candidate)
+            break
+
+    sub_style = BRAND.get("subtitle_style", {})
+    bg_color = sub_style.get("bg_color", "rgba(0,0,0,0.7)")
+    text_color = sub_style.get("text_color", "#FFFFFF")
+    highlight_color = sub_style.get("highlight_color", "#E8734A")
+    y_pos_ratio = sub_style.get("y_position_ratio", 0.84)
+
+    if words_data:
+        clips = _create_karaoke_subtitles(video, words_data, blocks, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio)
+    else:
+        clips = _create_simple_subtitles(video, blocks, font_size, font_name, text_color, bg_color, y_pos_ratio)
+
+    logger.info(f"Created {len(clips)} subtitle clips")
+    return clips
+
+
+def _create_karaoke_subtitles(video, words_data, srt_blocks, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio):
+    clips = []
+    words_per_segment = _map_words_to_srt(words_data, srt_blocks)
+
+    for seg_idx, block in enumerate(srt_blocks):
         lines = block.strip().split("\n")
         if len(lines) < 3:
             continue
 
-        time_line = lines[1]
-        text = " ".join(lines[2:]).strip()
-        if not text:
-            continue
-
         try:
-            parts = time_line.split(" --> ")
+            parts = lines[1].split(" --> ")
             start = _srt_to_sec(parts[0].strip())
             end = _srt_to_sec(parts[1].strip())
         except (IndexError, ValueError):
@@ -217,23 +252,150 @@ def _create_subtitle_clips(video, srt_path, draft):
         if duration <= 0:
             continue
 
+        text = " ".join(lines[2:]).strip()
+        if not text:
+            continue
+
+        seg_words = words_per_segment.get(seg_idx, [])
+
+        if seg_words:
+            clips.extend(_create_karaoke_word_clips(video, seg_words, start, end, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio))
+        else:
+            try:
+                txt_clip = TextClip(
+                    text,
+                    fontsize=font_size,
+                    font=font_name,
+                    color=text_color,
+                    bg_color=bg_color,
+                    size=(video.w * 0.88, None),
+                    method="caption",
+                )
+                txt_clip = txt_clip.set_start(start).set_duration(duration)
+                txt_clip = txt_clip.set_position(("center", video.h * y_pos_ratio))
+                clips.append(txt_clip)
+            except Exception as e:
+                logger.warning(f"Failed to create subtitle clip: {e}")
+
+    return clips
+
+
+def _create_karaoke_word_clips(video, seg_words, seg_start, seg_end, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio):
+    clips = []
+    chunk_size = 6
+    chunks = []
+    for i in range(0, len(seg_words), chunk_size):
+        chunks.append(seg_words[i:i + chunk_size])
+
+    if not chunks:
+        return clips
+
+    for chunk in chunks:
+        chunk_start = chunk[0]["start"]
+        chunk_end = chunk[-1]["end"]
+        chunk_text = " ".join(w["word"].strip() for w in chunk)
+        if not chunk_text:
+            continue
+
+        try:
+            txt_clip = TextClip(
+                chunk_text,
+                fontsize=font_size,
+                font=font_name,
+                color=text_color,
+                bg_color=bg_color,
+                size=(video.w * 0.88, None),
+                method="caption",
+            )
+            chunk_duration = chunk_end - chunk_start
+            if chunk_duration <= 0:
+                chunk_duration = 0.5
+            txt_clip = txt_clip.set_start(chunk_start).set_duration(chunk_duration)
+            txt_clip = txt_clip.set_position(("center", video.h * y_pos_ratio))
+            clips.append(txt_clip)
+        except Exception as e:
+            logger.warning(f"Failed to create karaoke clip: {e}")
+
+    return clips
+
+
+def _map_words_to_srt(words_data, srt_blocks):
+    words_per_segment = {}
+    word_idx = 0
+
+    for seg_idx, block in enumerate(srt_blocks):
+        lines = block.strip().split("\n")
+        if len(lines) < 3:
+            continue
+
+        try:
+            parts = lines[1].split(" --> ")
+            seg_start = _srt_to_sec(parts[0].strip())
+            seg_end = _srt_to_sec(parts[1].strip())
+        except (IndexError, ValueError):
+            continue
+
+        seg_words = []
+        while word_idx < len(words_data):
+            w = words_data[word_idx]
+            w_start = w["start"]
+            w_end = w["end"]
+            w_mid = (w_start + w_end) / 2
+
+            if w_mid < seg_start - 0.5:
+                word_idx += 1
+                continue
+            elif w_mid > seg_end + 0.5:
+                break
+            else:
+                seg_words.append(w)
+                word_idx += 1
+
+        if seg_words:
+            words_per_segment[seg_idx] = seg_words
+
+    return words_per_segment
+
+
+def _create_simple_subtitles(video, srt_blocks, font_size, font_name, text_color, bg_color, y_pos_ratio):
+    clips = []
+
+    for block in srt_blocks:
+        lines = block.strip().split("\n")
+        if len(lines) < 3:
+            continue
+
+        try:
+            parts = lines[1].split(" --> ")
+            start = _srt_to_sec(parts[0].strip())
+            end = _srt_to_sec(parts[1].strip())
+        except (IndexError, ValueError):
+            continue
+
+        duration = end - start
+        if duration <= 0:
+            continue
+
+        text = " ".join(lines[2:]).strip()
+        if not text:
+            continue
+
         try:
             txt_clip = TextClip(
                 text,
                 fontsize=font_size,
-                font=str(font_path) if font_path.exists() else "Arial",
-                color="white",
-                bg_color="rgba(0,0,0,0.6)",
-                size=(video.w * 0.9, None),
+                font=font_name,
+                color=text_color,
+                bg_color=bg_color,
+                size=(video.w * 0.88, None),
                 method="caption",
             )
             txt_clip = txt_clip.set_start(start).set_duration(duration)
-            txt_clip = txt_clip.set_position(("center", video.h * 0.82))
+            txt_clip = txt_clip.set_position(("center", video.h * y_pos_ratio))
             clips.append(txt_clip)
         except Exception as e:
             logger.warning(f"Failed to create subtitle clip: {e}")
 
-    logger.info(f"Created {len(clips)} subtitle clips")
     return clips
 
 
