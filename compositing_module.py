@@ -267,7 +267,6 @@ def _create_karaoke_subtitles(video, words_data, srt_blocks, font_size, font_nam
                     fontsize=font_size,
                     font=font_name,
                     color=text_color,
-                    bg_color=bg_color,
                     size=(video.w * 0.88, None),
                     method="caption",
                 )
@@ -303,7 +302,6 @@ def _create_karaoke_word_clips(video, seg_words, seg_start, seg_end, font_size, 
                 fontsize=font_size,
                 font=font_name,
                 color=text_color,
-                bg_color=bg_color,
                 size=(video.w * 0.88, None),
                 method="caption",
             )
@@ -386,7 +384,6 @@ def _create_simple_subtitles(video, srt_blocks, font_size, font_name, text_color
                 fontsize=font_size,
                 font=font_name,
                 color=text_color,
-                bg_color=bg_color,
                 size=(video.w * 0.88, None),
                 method="caption",
             )
