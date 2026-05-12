@@ -29,6 +29,8 @@ subtitle_style:
 
 info_card:
   enabled: true
+  interval_seconds: 90
+  show_duration: 8
   position: "top-left"
   width: 520
   padding: 28
@@ -62,6 +64,8 @@ text_card_style:
   padding_y: 36
   border_width: 2
   border_color: "#E8734A"
+  animation: "slide_up"        # "slide_up", "scale_bounce", "fade_scale", "none"
+  animation_duration: 0.35     # seconds for entrance/exit animation
 
 lower_third_style:
   bg_color: "#0A1628"
@@ -72,11 +76,31 @@ lower_third_style:
   corner_radius: 10
   accent_bar_width: 7
 
+smart_zoom:
+  enabled: true
+  max_zoom: 1.06              # subtle 6% zoom (1.0 = disabled)
+  cycle_seconds: 18           # seconds per zoom-in or zoom-out phase
+  face_detect_samples: 5      # frames to sample for face detection
+  fallback_center: true       # zoom toward center if no face found
+
+watermark:
+  logo: "assets/templates/brand_logo.png"
+  opacity: 0.1
+  position: "bottom-right"
+  margin: 20
+
 broll_fx:
   ken_burns: true
   zoom_start: 1.0
   zoom_end: 1.15
   zoom_duration: "full"
+
+image_generation:
+  style: "realistic editorial photo"
+  positive_suffix: "realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
+  negative_prompt: "extra fingers, missing fingers, fused fingers, deformed hands, bad hands, extra hands, multiple hands, extra arms, extra limbs, distorted limbs, twisted fingers, two fingers, three fingers, long fingers, broken fingers, close up hands, close up fingers, text, words, letters, watermark, logo, signature, blurry, low quality, deformed face, distorted face"
+  safe_scene_fallback: "an Indian woman patient sitting in a clean clinic while a female doctor talks to her, calm realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
+  avoid_hand_actions: true
 
 music:
   default_track: "assets/music/background.mp3"

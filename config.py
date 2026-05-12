@@ -42,14 +42,15 @@ COMFYUI_WORKFLOW = PATHS["workflows"] / "ZImageBaseModelWorkFlow.json"
 COMFYUI_DIR = Path(os.environ.get("COMFYUI_DIR", BASE_DIR / "ComfyUI")).resolve()
 COMFYUI_STARTUP_TIMEOUT = 60
 COMFYUI_POLL_INTERVAL = 2
+COMFYUI_KEEP_ALIVE = os.environ.get("COMFYUI_KEEP_ALIVE", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 OLLAMA_MODEL = os.environ.get("VIDEO_AI_MODEL", "").strip() or None
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "medium")
-WHISPER_LANGUAGE = "hi"
+WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", None)
 
-SILENCE_THRESHOLD_MS = 2000
+SILENCE_THRESHOLD_MS = int(os.environ.get("SILENCE_THRESHOLD_MS", "0"))
 
 RETRY_ATTEMPTS = 3
 RETRY_BASE_DELAY = 1
@@ -62,7 +63,7 @@ EXPORT_PROFILES = {
 
 DRAFT_RESOLUTION = (854, 480)
 
-VALID_ACTIONS = {"BROLL_IMAGE", "LOWER_THIRD", "TEXT_CARD"}
+VALID_ACTIONS = {"BROLL_IMAGE", "COMFYUI_PROMPT", "WEB_GIF", "LOWER_THIRD", "TEXT_CARD", "WATERMARK"}
 
 REQUIRED_TIMELINE_FIELDS = {"id", "time", "duration", "action", "data", "position"}
 

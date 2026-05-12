@@ -8,7 +8,7 @@ from pathlib import Path
 
 import requests
 
-from config import OLLAMA_URL, OLLAMA_MODEL, PATHS, RETRY_ATTEMPTS, RETRY_BASE_DELAY
+from config import OLLAMA_URL, OLLAMA_MODEL, PATHS, RETRY_ATTEMPTS, RETRY_BASE_DELAY, BRAND
 
 logger = logging.getLogger("pipeline.director")
 
@@ -24,36 +24,45 @@ RULES:
 5. Optional field: fade ("in", "out", "in-out") — REQUIRED for BROLL_IMAGE (use "in-out")
 6. Optional field: fx — for BROLL_IMAGE, set fx: "ken_burns_in" (slow zoom in) or "ken_burns_out" (slow zoom out). Alternate between them.
 
-BROLL_IMAGE PROMPT RULES (CRITICAL — READ CAREFULLY):
+CRITICAL COVERAGE RULE:
+- You MUST place overlays across the ENTIRE video duration, from start to finish.
+- Divide the video into equal segments (every 30-45 seconds) and ensure EACH segment has at least one BROLL_IMAGE or TEXT_CARD.
+- DO NOT cluster all overlays in the first few minutes. The LAST quarter of the video needs overlays just as much as the first quarter.
+- If the video is 10 minutes long, you need overlays at 1:00, 2:00, 3:00, ... 9:00 etc.
+
+BROLL_IMAGE PROMPT RULES (CRITICAL - READ CAREFULLY):
 - This is the MOST IMPORTANT action. Use it whenever the speaker mentions a medical concept or topic.
-- The image will REPLACE the video FULL SCREEN while audio continues — like real B-roll editing.
-- KEEP PROMPTS SIMPLE, CONCRETE, AND PEOPLE-FOCUSED. The ZImage AI model CANNOT do abstract concepts, diagrams, infographics, or 3D renders.
+- The image will REPLACE the video FULL SCREEN while audio continues, like real B-roll editing.
+- KEEP PROMPTS SIMPLE, REALISTIC, CONCRETE, AND PEOPLE-FOCUSED. The ZImage AI model does poorly with abstract concepts, diagrams, tiny objects, close-up hands, and complex scenes.
 
 MANDATORY: Every BROLL_IMAGE prompt MUST describe a SCENE with a PERSON (woman/girl/female doctor/nurse/patient) doing something specific.
 NEVER generate prompts without a person. NEVER generate prompts for abstract concepts.
 
-TEMPLATE for every prompt: "[person description] [doing action] [in setting], [mood/atmosphere], soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+TEMPLATE for every prompt: "[one person or two people] [simple script-based action] [in simple setting], realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
+
+HAND SAFETY:
+- Avoid prompts focused on hands, fingers, injections, syringes, vials, reports, papers, phones, or small objects.
+- Do not say "holding", "showing", "pointing", "touching", "folded hands", or "close up of hands".
+- Prefer "doctor talking to patient", "patient listening", "woman sitting calmly", "doctor standing beside patient".
+- Use medium shot or waist-up shot, never close-up hands.
 
 CONCRETE EXAMPLES OF GOOD PROMPTS:
-- "a young Indian woman sitting in a doctor's waiting room looking calm, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "a female doctor in a white coat holding a vaccine vial and smiling reassuringly, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "a pregnant Indian woman gently holding her belly with a peaceful smile, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "a young woman lying on a medical bed while a female doctor examines her with care, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "an Indian woman patient talking to a female doctor across a desk in a cozy clinic, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "a middle-aged Indian woman looking relieved after a health checkup, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "a female doctor showing a medicine bottle to a woman patient and explaining softly, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
-- "a young Indian girl receiving an injection on her arm from a kind female nurse, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+- "a young Indian woman sitting in a clean clinic waiting room looking calm, realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
+- "a female doctor talking to an Indian woman patient in a modern clinic, realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
+- "a pregnant Indian woman sitting peacefully in a bright clinic room, realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
+- "an Indian woman patient listening carefully to a female doctor across a clinic desk, realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
+- "a middle-aged Indian woman looking relieved after a health checkup in a clinic, realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
 
 NEVER USE THESE (THE MODEL CANNOT RENDER THEM):
-- "infographic", "diagram", "chart", "statistics", "3D animation", "cross-section", "anatomical illustration", "medical diagram", "virus particles", "molecular structure", "flowchart", "comparison table", "X-ray", "microscope view", "abstract representation", "screenshot", "UI", "app interface"
+- "infographic", "diagram", "chart", "statistics", "3D animation", "cross-section", "anatomical illustration", "medical diagram", "virus particles", "molecular structure", "flowchart", "comparison table", "X-ray", "microscope view", "abstract representation", "screenshot", "UI", "app interface", "text overlay", "title card", "label", "close up hands", "fingers"
 
-DURATION: 5-6 seconds per BROLL_IMAGE. Keep images short and impactful — change them frequently to keep viewer engaged.
+DURATION: 5-6 seconds per BROLL_IMAGE. Keep images short and impactful. Change them frequently to keep viewer engaged.
 Position: "center". Always set fade: "in-out". Set fx: "ken_burns_in" or "ken_burns_out" (alternate between them).
-Generate 8-14 BROLL_IMAGE entries per video — cover as many topic changes as possible.
+Generate AT LEAST 12-18 BROLL_IMAGE entries per video. Use one every 30-45 seconds. Cover the ENTIRE video from start to finish.
 
 LOWER_THIRD: Use for speaker introductions only. Position: "bottom-left". Duration: 5-7 seconds.
 
-TEXT_CARD: Quick pop-up overlays for key points the doctor mentions. Use these VERY FREQUENTLY — every time the doctor says a specific point like "pehla problem hai periods ka pain" or "HPV ka matlab hai Human Papillomavirus", add a quick 3-4 second TEXT_CARD that pops in and out fast. These should feel like quick emphasis pops, not lingering cards. Generate 10-20 TEXT_CARD entries per video. Short punchy Hinglish statements. Position: "center". Duration: 3-4 seconds. Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain", "Pap Smear Zaroori Hai!".
+TEXT_CARD: Quick pop-up overlays for key points the doctor mentions. Use these VERY FREQUENTLY — every time the doctor says a specific point like "pehla problem hai periods ka pain" or "HPV ka matlab hai Human Papillomavirus", add a quick 3-4 second TEXT_CARD that pops in and out fast. These should feel like quick emphasis pops, not lingering cards. Generate AT LEAST 15-25 TEXT_CARD entries per video — one every 20-30 seconds. Short punchy Hinglish statements. Position: "center". Duration: 3-4 seconds. Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain", "Pap Smear Zaroori Hai!".
 
 Do NOT place overlays during the first 3 seconds of video.
 Space overlays at least 2 seconds apart.
@@ -182,6 +191,10 @@ Create the timeline JSON now."""
         timeline_data.setdefault("video_info", {})["language"] = "hinglish"
         timeline_data.setdefault("silence_trim", True)
 
+        # Post-process: sanitize BROLL_IMAGE prompts and check density
+        timeline_data = _sanitize_broll_prompts(timeline_data)
+        timeline_data = _enforce_timeline_density(timeline_data, duration_sec)
+
     timeline_path = PATHS["temp"] / f"{Path(input_filename).stem}_timeline.json"
     timeline_path.write_text(json.dumps(timeline_data, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"Timeline saved: {timeline_path}")
@@ -262,6 +275,222 @@ def _parse_ollama_json(response: str) -> dict:
                 pass
         logger.error(f"Could not parse JSON from Ollama response: {text[:200]}")
         return {}
+
+
+# --- BROLL prompt sanitizer ---
+BANNED_PROMPT_TERMS = [
+    "infographic", "diagram", "chart", "statistics", "3D animation",
+    "cross-section", "anatomical illustration", "medical diagram",
+    "virus particles", "molecular structure", "flowchart",
+    "comparison table", "X-ray", "x-ray", "microscope view",
+    "abstract representation", "screenshot", "UI", "app interface",
+    "text overlay", "title card", "label", "3d render", "3D render",
+    "cutaway", "split screen", "before and after",
+]
+
+WATERCOLOR_SUFFIX = ", soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+NO_TEXT_SUFFIX = ", no text, no words, no letters, no watermark, no signature, no writing"
+
+
+def _sanitize_broll_prompts(timeline_data: dict) -> dict:
+    """Clean up BROLL_IMAGE prompts: strip banned terms, ensure style suffix."""
+    if "timeline" not in timeline_data:
+        return timeline_data
+
+    sanitized_count = 0
+    for entry in timeline_data["timeline"]:
+        if entry.get("action") != "BROLL_IMAGE":
+            continue
+
+        prompt = entry["data"]
+        original = prompt
+
+        # Remove banned terms
+        for term in BANNED_PROMPT_TERMS:
+            pattern = re.compile(re.escape(term), re.IGNORECASE)
+            prompt = pattern.sub("", prompt)
+
+        # Clean up double commas/spaces left after removal
+        prompt = re.sub(r",\s*,", ",", prompt)
+        prompt = re.sub(r"\s{2,}", " ", prompt).strip().strip(",").strip()
+
+        # Ensure watercolor style suffix
+        if "watercolor" not in prompt.lower():
+            prompt = prompt.rstrip(",. ") + WATERCOLOR_SUFFIX
+
+        # Ensure no-text suffix
+        if "no text" not in prompt.lower():
+            prompt = prompt.rstrip(",. ") + NO_TEXT_SUFFIX
+
+        # Ensure fade and fx defaults
+        entry.setdefault("fade", "in-out")
+        if "fx" not in entry:
+            entry["fx"] = "ken_burns_in" if sanitized_count % 2 == 0 else "ken_burns_out"
+
+        if prompt != original:
+            sanitized_count += 1
+            logger.info(f"Sanitized BROLL prompt for entry {entry.get('id')}: removed banned terms")
+
+        entry["data"] = prompt
+
+    if sanitized_count:
+        logger.info(f"Sanitized {sanitized_count} BROLL_IMAGE prompts")
+    return timeline_data
+
+
+def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
+    """Check timeline density and AUTO-FILL gaps where no overlays exist.
+    
+    If the AI director left segments >45s without any BROLL_IMAGE or TEXT_CARD,
+    this function inserts filler entries to ensure full video coverage.
+    """
+    if "timeline" not in timeline_data or duration_sec <= 0:
+        return timeline_data
+
+    timeline = timeline_data["timeline"]
+    broll_entries = [e for e in timeline if e.get("action") == "BROLL_IMAGE"]
+    text_entries = [e for e in timeline if e.get("action") == "TEXT_CARD"]
+    all_visual = broll_entries + text_entries
+
+    if not all_visual:
+        logger.warning("DENSITY CHECK: No BROLL_IMAGE or TEXT_CARD entries in timeline!")
+        return timeline_data
+
+    # Parse times and sort
+    def _t(e):
+        parts = e["time"].split(":")
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+        return 0
+
+    all_visual.sort(key=_t)
+    times = [_t(e) for e in all_visual]
+
+    # Build list of gap intervals (>45s) that need filling
+    GAP_THRESHOLD = 45  # seconds
+    gaps = []
+
+    # Check gap from start
+    if times[0] > GAP_THRESHOLD:
+        gaps.append((3, times[0]))
+
+    # Check gaps between entries
+    for i in range(len(times) - 1):
+        gap_start = times[i] + 5  # account for entry duration
+        gap_end = times[i + 1]
+        if gap_end - gap_start > GAP_THRESHOLD:
+            gaps.append((gap_start, gap_end))
+
+    # Check gap from last entry to video end
+    last_overlay_end = times[-1] + 5
+    if duration_sec - last_overlay_end > GAP_THRESHOLD:
+        gaps.append((last_overlay_end, duration_sec - 5))
+
+    # Summary before filling
+    last_overlay_time = times[-1] if times else 0
+    logger.info(
+        f"Timeline density: {len(broll_entries)} BROLL_IMAGE, {len(text_entries)} TEXT_CARD "
+        f"across {duration_sec:.0f}s video. "
+        f"Coverage: 0s to {last_overlay_time:.0f}s ({last_overlay_time/duration_sec*100:.0f}%)"
+    )
+
+    if not gaps:
+        logger.info("Timeline density OK — no large gaps detected")
+        return timeline_data
+
+    logger.warning(f"DENSITY CHECK: Found {len(gaps)} gap(s) to auto-fill")
+
+    # Generate filler entries for each gap
+    max_existing_id = 0
+    for e in timeline:
+        try:
+            max_existing_id = max(max_existing_id, int(e.get("id", 0)))
+        except (ValueError, TypeError):
+            pass
+
+    filler_id = max_existing_id + 100  # start filler IDs at a safe offset
+    inserted_count = 0
+
+    # Safe generic BROLL prompts for filler (rotate through these)
+    FILLER_BROLL_PROMPTS = [
+        "a female doctor in a white coat smiling warmly at the camera in a modern clinic, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+        "a young Indian woman sitting comfortably and listening attentively in a doctor's office, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+        "a kind female doctor writing notes while talking to a woman patient, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+        "a young Indian couple holding hands supportively in a hospital waiting area, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+        "a female doctor showing care and empathy while examining a patient gently, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+        "an Indian woman looking hopeful and relaxed after visiting a female doctor, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+    ]
+
+    FILLER_TEXT_CARDS = [
+        "Doctor Se Zaroor Milein!",
+        "Apni Health Ka Dhyan Rakhein",
+        "Sahi Jaankari Zaroori Hai",
+        "Regular Checkup Karwayein",
+        "Dr. Deepika Se Expert Advice",
+        "Aapki Sehat, Humari Zimmedari",
+        "Timely Treatment Se Fayda",
+        "Questions? Doctor Se Poochein!",
+    ]
+
+    broll_idx = 0
+    text_idx = 0
+
+    for gap_start, gap_end in gaps:
+        gap_duration = gap_end - gap_start
+        logger.info(f"Auto-filling gap: {gap_start:.0f}s → {gap_end:.0f}s ({gap_duration:.0f}s)")
+
+        # Fill the gap by placing entries every ~30s
+        t = gap_start + 5  # small offset from gap start
+        while t < gap_end - 10:
+            # Alternate: BROLL then TEXT_CARD
+            if inserted_count % 2 == 0:
+                # Insert a BROLL_IMAGE
+                h = int(t // 3600)
+                m = int((t % 3600) // 60)
+                s = int(t % 60)
+                entry = {
+                    "id": filler_id,
+                    "time": f"{h:02d}:{m:02d}:{s:02d}",
+                    "duration": 5,
+                    "action": "BROLL_IMAGE",
+                    "data": FILLER_BROLL_PROMPTS[broll_idx % len(FILLER_BROLL_PROMPTS)],
+                    "position": "center",
+                    "fade": "in-out",
+                    "fx": "ken_burns_in" if broll_idx % 2 == 0 else "ken_burns_out",
+                    "_auto_filled": True,
+                }
+                broll_idx += 1
+                t += 30  # next entry ~30s later
+            else:
+                # Insert a TEXT_CARD
+                h = int(t // 3600)
+                m = int((t % 3600) // 60)
+                s = int(t % 60)
+                entry = {
+                    "id": filler_id,
+                    "time": f"{h:02d}:{m:02d}:{s:02d}",
+                    "duration": 3,
+                    "action": "TEXT_CARD",
+                    "data": FILLER_TEXT_CARDS[text_idx % len(FILLER_TEXT_CARDS)],
+                    "position": "center",
+                    "fade": "in-out",
+                    "_auto_filled": True,
+                }
+                text_idx += 1
+                t += 25  # next entry ~25s later
+
+            timeline.append(entry)
+            filler_id += 1
+            inserted_count += 1
+
+    if inserted_count:
+        logger.info(f"Auto-filled {inserted_count} entries to cover timeline gaps")
+        # Re-sort timeline by time
+        timeline.sort(key=_t)
+
+    return timeline_data
 
 
 def unload_ollama(model_name: str):

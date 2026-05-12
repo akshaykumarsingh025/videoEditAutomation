@@ -28,6 +28,7 @@ Local and cloud Ollama models both work. The model name must match exactly, for 
 - Put background music in `assets/music/background.mp3`.
 - Set `GIPHY_API_KEY` if you want WEB_GIF assets.
 - Set `COMFYUI_DIR` if ComfyUI is installed outside this project.
+- `COMFYUI_KEEP_ALIVE=true` keeps ComfyUI running after image generation so later steps continue without the pipeline shutting it down.
 
 ## Useful Commands
 
@@ -60,6 +61,7 @@ If `--model` is not provided and `VIDEO_AI_MODEL` is not set, the script will sh
 ## Video Quality Notes
 
 - Draft mode skips ComfyUI image generation for speed.
+- Generated ComfyUI images are cached by video/entry id, so a resumed run skips images that already exist.
 - Shorts and square exports use a background-plus-foreground reframe instead of stretching the source video.
 - The AI director prompt favors clean educational overlays, strong hook timing, and fewer reaction GIFs.
 - Timeline validation warns when overlays are too close together or start too early.

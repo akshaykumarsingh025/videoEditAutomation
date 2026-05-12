@@ -258,16 +258,25 @@ def run_pipeline(
                 logger.info("--- 3A: ComfyUI Images skipped in draft mode ---")
             else:
                 logger.info("--- 3A: ComfyUI Images (Z-Image) ---")
-                comfyui_result = generate_comfyui_images(entries, asset_prefix=video_name)
-                logger.info(f"ComfyUI: {len(comfyui_result['generated'])} generated, {len(comfyui_result['failed'])} failed")
+                try:
+                    comfyui_result = generate_comfyui_images(entries, asset_prefix=video_name)
+                    logger.info(f"ComfyUI: {len(comfyui_result['generated'])} generated/cached, {len(comfyui_result['failed'])} failed")
+                except Exception as e:
+                    logger.error(f"ComfyUI image generation failed, continuing to other asset steps: {e}")
 
             logger.info("--- 3B: Web Assets (Giphy) ---")
-            web_result = download_web_assets(entries, asset_prefix=video_name)
-            logger.info(f"Web: {len(web_result['downloaded'])} downloaded, {len(web_result['failed'])} failed")
+            try:
+                web_result = download_web_assets(entries, asset_prefix=video_name)
+                logger.info(f"Web: {len(web_result['downloaded'])} downloaded, {len(web_result['failed'])} failed")
+            except Exception as e:
+                logger.error(f"Web asset download failed, continuing to graphics: {e}")
 
             logger.info("--- 3C: Static Graphics (Pillow) ---")
-            gfx_result = generate_graphics(entries, asset_prefix=video_name)
-            logger.info(f"Graphics: {len(gfx_result['generated'])} generated, {len(gfx_result['failed'])} failed")
+            try:
+                gfx_result = generate_graphics(entries, asset_prefix=video_name)
+                logger.info(f"Graphics: {len(gfx_result['generated'])} generated, {len(gfx_result['failed'])} failed")
+            except Exception as e:
+                logger.error(f"Static graphics generation failed: {e}")
         else:
             logger.warning("No timeline data, skipping asset generation")
 

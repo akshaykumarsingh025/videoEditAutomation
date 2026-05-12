@@ -91,9 +91,9 @@ def validate_timeline(timeline_data: dict, video_duration: float) -> dict:
     overlay_times.sort(key=lambda item: item["time"])
     for prev, current in zip(overlay_times, overlay_times[1:]):
         gap = current["time"] - prev["time"]
-        if gap < 5:
+        if gap < 2:
             warnings.append(
-                f"entry id={current['id']}: starts {gap:.1f}s after entry {prev['id']}; top-notch edits need more breathing room"
+                f"entry id={current['id']}: starts {gap:.1f}s after entry {prev['id']}; overlays too close together"
             )
 
     if web_gif_count > 2:

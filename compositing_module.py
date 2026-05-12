@@ -5,7 +5,14 @@ import re
 import subprocess
 import warnings
 import math
+import time
 from pathlib import Path
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
 os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
@@ -20,6 +27,7 @@ except Exception:
 from moviepy.editor import (
     VideoFileClip,
     AudioFileClip,
+    ColorClip,
     CompositeVideoClip,
     ImageClip,
     TextClip,
@@ -58,6 +66,9 @@ def composite_video(
         target_w, target_h = profile_config["resolution"]
 
     video = _prepare_base_video(video, target_w, target_h, profile)
+
+    # Smart Zoom: subtle face-tracking zoom on talking-head segments
+    video = _apply_smart_zoom(video, timeline_data, draft)
 
     clips = [video]
     clips.extend(_create_timeline_clips(video, timeline_data, draft, asset_prefix))
@@ -206,36 +217,126 @@ def _create_subtitle_clips(video, srt_path, draft, asset_prefix=""):
 
     font_size = max(18, int(BRAND["fonts"]["subtitle_size"] * scale))
 
-    font_name = "Arial"
+    font_path = None
     for candidate in [
         PATHS["fonts"] / BRAND["fonts"].get("subtitle", "Poppins-Medium.ttf"),
         PATHS["fonts"] / "Poppins-Medium.ttf",
         Path("C:/Windows/Fonts/segoeui.ttf"),
         Path("C:/Windows/Fonts/arial.ttf"),
+        Path("C:/Windows/Fonts/NotoSans-Regular.ttf"),
+        Path("C:/Windows/Fonts/mangal.ttf"),
+        Path("C:/Windows/Fonts/devanagari.ttf"),
     ]:
         if candidate.exists():
-            font_name = str(candidate)
+            font_path = candidate
             break
 
     sub_style = BRAND.get("subtitle_style", {})
-    bg_color = sub_style.get("bg_color", "rgba(0,0,0,0.7)")
     text_color = sub_style.get("text_color", "#FFFFFF")
     highlight_color = sub_style.get("highlight_color", "#E8734A")
     y_pos_ratio = sub_style.get("y_position_ratio", 0.84)
 
     if words_data:
-        clips = _create_karaoke_subtitles(video, words_data, blocks, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio)
+        clips = _create_karaoke_subtitles_pillow(video, words_data, blocks, font_size, font_path, text_color, highlight_color, y_pos_ratio)
     else:
-        clips = _create_simple_subtitles(video, blocks, font_size, font_name, text_color, bg_color, y_pos_ratio)
+        clips = _create_simple_subtitles_pillow(video, blocks, font_size, font_path, text_color, y_pos_ratio)
 
     logger.info(f"Created {len(clips)} subtitle clips")
     return clips
 
 
-def _create_karaoke_subtitles(video, words_data, srt_blocks, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio):
+def _hex_to_rgb(hex_color: str) -> tuple:
+    """Convert hex color string to RGB tuple."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c * 2 for c in hex_color)
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+
+def _load_font_safe(font_path, size):
+    """Load a TrueType font with fallback to Pillow's default."""
+    try:
+        return ImageFont.truetype(str(font_path), size)
+    except (IOError, OSError):
+        logger.warning(f"Could not load font {font_path}, trying system fallback")
+        for fallback in [
+            Path("C:/Windows/Fonts/segoeui.ttf"),
+            Path("C:/Windows/Fonts/arial.ttf"),
+        ]:
+            if fallback.exists():
+                try:
+                    return ImageFont.truetype(str(fallback), size)
+                except (IOError, OSError):
+                    continue
+        return ImageFont.load_default()
+
+
+def _render_subtitle_image(text, video_w, video_h, font_size, font_path, text_color_hex, y_pos_ratio):
+    """Render subtitle text as a transparent PNG using Pillow — no ImageMagick needed."""
+    font = _load_font_safe(font_path, font_size) if font_path else _load_font_safe(Path("arial.ttf"), font_size)
+    max_text_w = int(video_w * 0.88)
+
+    canvas = Image.new("RGBA", (video_w, video_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    # Word-wrap
+    words = text.split()
+    wrapped_lines = []
+    current_line = ""
+    for word in words:
+        test = f"{current_line} {word}".strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if bbox[2] - bbox[0] > max_text_w and current_line:
+            wrapped_lines.append(current_line)
+            current_line = word
+        else:
+            current_line = test
+    if current_line:
+        wrapped_lines.append(current_line)
+
+    if not wrapped_lines:
+        return None
+
+    line_height = draw.textbbox((0, 0), "Ay", font=font)[3] + 6
+
+    actual_max_w = 0
+    for line in wrapped_lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        actual_max_w = max(actual_max_w, bbox[2] - bbox[0])
+
+    pad_x = 28
+    pad_y = 14
+    block_h = len(wrapped_lines) * line_height + pad_y * 2
+    block_w = actual_max_w + pad_x * 2
+
+    y_start = int(video_h * y_pos_ratio)
+    x_start = (video_w - block_w) // 2
+
+    draw.rounded_rectangle(
+        [(x_start, y_start - pad_y), (x_start + block_w, y_start - pad_y + block_h)],
+        radius=10,
+        fill=(0, 0, 0, 170),
+    )
+
+    text_rgb = _hex_to_rgb(text_color_hex)
+    for i, line in enumerate(wrapped_lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        tw = bbox[2] - bbox[0]
+        lx = (video_w - tw) // 2
+        ly = y_start + i * line_height
+        draw.text((lx + 2, ly + 2), line, fill=(0, 0, 0, 180), font=font)
+        draw.text((lx, ly), line, fill=text_rgb + (255,), font=font)
+
+    return canvas
+
+
+def _create_karaoke_subtitles_pillow(video, words_data, srt_blocks, font_size, font_path, text_color, highlight_color, y_pos_ratio):
     clips = []
     words_per_segment = _map_words_to_srt(words_data, srt_blocks)
+    sub_cache_dir = PATHS["temp"] / "subtitle_frames"
+    sub_cache_dir.mkdir(parents=True, exist_ok=True)
 
+    clip_idx = 0
     for seg_idx, block in enumerate(srt_blocks):
         lines = block.strip().split("\n")
         if len(lines) < 3:
@@ -259,60 +360,39 @@ def _create_karaoke_subtitles(video, words_data, srt_blocks, font_size, font_nam
         seg_words = words_per_segment.get(seg_idx, [])
 
         if seg_words:
-            clips.extend(_create_karaoke_word_clips(video, seg_words, start, end, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio))
+            chunk_size = 8
+            for i in range(0, len(seg_words), chunk_size):
+                chunk = seg_words[i:i + chunk_size]
+                chunk_start = chunk[0]["start"]
+                chunk_end = chunk[-1]["end"]
+                chunk_text = " ".join(w["word"].strip() for w in chunk)
+                if not chunk_text:
+                    continue
+                chunk_duration = max(chunk_end - chunk_start, 0.3)
+
+                try:
+                    img = _render_subtitle_image(chunk_text, video.w, video.h, font_size, font_path, text_color, y_pos_ratio)
+                    if img is None:
+                        continue
+                    img_path = sub_cache_dir / f"sub_{clip_idx:05d}.png"
+                    img.save(str(img_path))
+                    clip = ImageClip(str(img_path)).set_start(chunk_start).set_duration(chunk_duration)
+                    clips.append(clip)
+                    clip_idx += 1
+                except Exception as e:
+                    logger.warning(f"Failed to create karaoke subtitle: {e}")
         else:
             try:
-                txt_clip = TextClip(
-                    text,
-                    fontsize=font_size,
-                    font=font_name,
-                    color=text_color,
-                    size=(video.w * 0.88, None),
-                    method="caption",
-                )
-                txt_clip = txt_clip.set_start(start).set_duration(duration)
-                txt_clip = txt_clip.set_position(("center", video.h * y_pos_ratio))
-                clips.append(txt_clip)
+                img = _render_subtitle_image(text, video.w, video.h, font_size, font_path, text_color, y_pos_ratio)
+                if img is None:
+                    continue
+                img_path = sub_cache_dir / f"sub_{clip_idx:05d}.png"
+                img.save(str(img_path))
+                clip = ImageClip(str(img_path)).set_start(start).set_duration(duration)
+                clips.append(clip)
+                clip_idx += 1
             except Exception as e:
-                logger.warning(f"Failed to create subtitle clip: {e}")
-
-    return clips
-
-
-def _create_karaoke_word_clips(video, seg_words, seg_start, seg_end, font_size, font_name, text_color, highlight_color, bg_color, y_pos_ratio):
-    clips = []
-    chunk_size = 6
-    chunks = []
-    for i in range(0, len(seg_words), chunk_size):
-        chunks.append(seg_words[i:i + chunk_size])
-
-    if not chunks:
-        return clips
-
-    for chunk in chunks:
-        chunk_start = chunk[0]["start"]
-        chunk_end = chunk[-1]["end"]
-        chunk_text = " ".join(w["word"].strip() for w in chunk)
-        if not chunk_text:
-            continue
-
-        try:
-            txt_clip = TextClip(
-                chunk_text,
-                fontsize=font_size,
-                font=font_name,
-                color=text_color,
-                size=(video.w * 0.88, None),
-                method="caption",
-            )
-            chunk_duration = chunk_end - chunk_start
-            if chunk_duration <= 0:
-                chunk_duration = 0.5
-            txt_clip = txt_clip.set_start(chunk_start).set_duration(chunk_duration)
-            txt_clip = txt_clip.set_position(("center", video.h * y_pos_ratio))
-            clips.append(txt_clip)
-        except Exception as e:
-            logger.warning(f"Failed to create karaoke clip: {e}")
+                logger.warning(f"Failed to create subtitle: {e}")
 
     return clips
 
@@ -355,8 +435,11 @@ def _map_words_to_srt(words_data, srt_blocks):
     return words_per_segment
 
 
-def _create_simple_subtitles(video, srt_blocks, font_size, font_name, text_color, bg_color, y_pos_ratio):
+def _create_simple_subtitles_pillow(video, srt_blocks, font_size, font_path, text_color, y_pos_ratio):
     clips = []
+    sub_cache_dir = PATHS["temp"] / "subtitle_frames"
+    sub_cache_dir.mkdir(parents=True, exist_ok=True)
+    clip_idx = 0
 
     for block in srt_blocks:
         lines = block.strip().split("\n")
@@ -379,17 +462,14 @@ def _create_simple_subtitles(video, srt_blocks, font_size, font_name, text_color
             continue
 
         try:
-            txt_clip = TextClip(
-                text,
-                fontsize=font_size,
-                font=font_name,
-                color=text_color,
-                size=(video.w * 0.88, None),
-                method="caption",
-            )
-            txt_clip = txt_clip.set_start(start).set_duration(duration)
-            txt_clip = txt_clip.set_position(("center", video.h * y_pos_ratio))
-            clips.append(txt_clip)
+            img = _render_subtitle_image(text, video.w, video.h, font_size, font_path, text_color, y_pos_ratio)
+            if img is None:
+                continue
+            img_path = sub_cache_dir / f"sub_simple_{clip_idx:05d}.png"
+            img.save(str(img_path))
+            clip = ImageClip(str(img_path)).set_start(start).set_duration(duration)
+            clips.append(clip)
+            clip_idx += 1
         except Exception as e:
             logger.warning(f"Failed to create subtitle clip: {e}")
 
@@ -460,7 +540,7 @@ def _create_timeline_clips(video, timeline_data, draft, asset_prefix=""):
 
                 clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
                 clip = clip.resize((video.w, video.h))
-                clip = _apply_fade(clip, fade or "in-out", duration)
+                clip = _animate_text_card(clip, video, duration)
 
             elif entry["action"] == "LOWER_THIRD":
                 img_path = _find_asset(PATHS["graphics"], asset_prefix, "lower_third", entry["id"], [".png"])
@@ -486,15 +566,13 @@ def _create_timeline_clips(video, timeline_data, draft, asset_prefix=""):
 
 
 def _create_watermark_clip(video, timeline_data, draft):
-    if not timeline_data or "timeline" not in timeline_data:
-        return []
+    watermark_cfg = BRAND.get("watermark", {})
+    watermark_entries = []
+    if timeline_data and "timeline" in timeline_data:
+        watermark_entries = [e for e in timeline_data["timeline"] if e.get("action") == "WATERMARK"]
 
-    watermark_entries = [e for e in timeline_data["timeline"] if e["action"] == "WATERMARK"]
-    if not watermark_entries:
-        return []
-
-    logo_name = watermark_entries[0].get("data", "brand_logo.png")
-    configured_logo = BRAND.get("watermark", {}).get("logo")
+    configured_logo = watermark_cfg.get("logo")
+    logo_name = watermark_entries[0].get("data") if watermark_entries else None
     logo_name = logo_name or configured_logo or "brand_logo.png"
     logo_path = Path(logo_name)
     if not logo_path.is_absolute():
@@ -504,17 +582,364 @@ def _create_watermark_clip(video, timeline_data, draft):
         return _create_text_watermark_clip(video)
 
     try:
-        opacity = BRAND["watermark"]["opacity"]
+        opacity = watermark_cfg.get("opacity", 0.1)
         clip = ImageClip(str(logo_path)).set_duration(video.duration).set_start(0)
         clip = clip.resize(height=video.h // 8)
         clip = clip.set_opacity(opacity)
-        margin = BRAND["watermark"].get("margin", 20)
-        pos = BRAND["watermark"].get("position", "bottom-right")
+        margin = watermark_cfg.get("margin", 20)
+        pos = watermark_cfg.get("position", "bottom-right")
         clip = _apply_position(clip, video, pos, margin)
         return [clip]
     except Exception as e:
         logger.error(f"Failed to create watermark clip: {e}")
         return []
+
+
+# ─── Smart Zoom (Face-Tracking Subtle Zoom) ───────────────────────────
+
+def _apply_smart_zoom(video, timeline_data, draft):
+    """Apply subtle zoom toward the speaker's face during talking-head segments.
+    
+    The zoom oscillates slowly (zoom-in → zoom-out → repeat) so the video
+    feels alive even when the speaker is stationary. The zoom target is the
+    detected face center, falling back to frame center if no face is found.
+    """
+    zoom_cfg = BRAND.get("smart_zoom", {})
+    if not zoom_cfg.get("enabled", False):
+        return video
+
+    max_zoom = zoom_cfg.get("max_zoom", 1.06)
+    if max_zoom <= 1.0:
+        return video
+
+    cycle_sec = max(float(zoom_cfg.get("cycle_seconds", 18)), 0.1)
+    num_samples = zoom_cfg.get("face_detect_samples", 5)
+    fallback_center = zoom_cfg.get("fallback_center", True)
+
+    # Detect face center from sampled frames
+    face_cx, face_cy = _detect_face_center(video, num_samples)
+
+    if face_cx is None:
+        if fallback_center:
+            face_cx, face_cy = 0.5, 0.45  # slightly above center (typical head position)
+            logger.info("Smart zoom: no face detected, using default center (0.5, 0.45)")
+        else:
+            logger.info("Smart zoom: no face detected and fallback disabled, skipping")
+            return video
+    else:
+        logger.info(f"Smart zoom: face center detected at ({face_cx:.2f}, {face_cy:.2f})")
+
+    # Build overlay intervals from timeline (when B-roll covers the video)
+    broll_intervals = []
+    if timeline_data and "timeline" in timeline_data:
+        for entry in timeline_data["timeline"]:
+            if entry.get("action") in ("BROLL_IMAGE", "COMFYUI_PROMPT"):
+                t = _time_to_sec(entry["time"])
+                d = entry.get("duration", 5)
+                broll_intervals.append((t, t + d))
+
+    w, h = video.w, video.h
+    target_px = face_cx * w
+    target_py = face_cy * h
+
+    def zoom_filter(get_frame, t):
+        """Per-frame zoom function. Applies subtle oscillating zoom toward face."""
+        # Check if B-roll is active at this time (no zoom needed)
+        for bstart, bend in broll_intervals:
+            if bstart <= t <= bend:
+                return get_frame(t)
+
+        # Full cycle: 1.0 -> max_zoom -> 1.0.
+        phase = (t % cycle_sec) / cycle_sec
+        zoom = 1.0 + (max_zoom - 1.0) * (0.5 - 0.5 * math.cos(phase * 2 * math.pi))
+
+        frame = get_frame(t)
+        try:
+            import numpy as np
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame, 0, 255).astype("uint8")
+            frame = np.ascontiguousarray(frame)
+        except Exception:
+            pass
+        fh, fw = frame.shape[:2]
+
+        # Compute crop region centered on face with zoom
+        crop_w = max(1, min(fw, int(round(fw / zoom))))
+        crop_h = max(1, min(fh, int(round(fh / zoom))))
+
+        # Center crop on face position, clamped to frame bounds
+        cx = int(target_px * (fw / w))
+        cy = int(target_py * (fh / h))
+        x1 = max(0, min(cx - crop_w // 2, fw - crop_w))
+        y1 = max(0, min(cy - crop_h // 2, fh - crop_h))
+        x2 = x1 + crop_w
+        y2 = y1 + crop_h
+
+        cropped = frame[y1:y2, x1:x2]
+        if cropped.size == 0:
+            return frame
+
+        # Resize back to original dimensions
+        try:
+            import cv2 as _cv2
+            resized = _cv2.resize(cropped, (fw, fh), interpolation=_cv2.INTER_LINEAR)
+        except Exception:
+            # Fallback: use Pillow if cv2 fails
+            from PIL import Image as _PILImage
+            import numpy as np
+            pil_img = _PILImage.fromarray(cropped)
+            pil_img = pil_img.resize((fw, fh), _PILImage.LANCZOS)
+            resized = np.array(pil_img)
+
+        return resized
+
+    try:
+        zoomed = video.fl(zoom_filter)
+        zoomed = zoomed.set_duration(video.duration)
+        if video.audio:
+            zoomed = zoomed.set_audio(video.audio)
+        logger.info(f"Smart zoom applied: max {max_zoom:.0%}, cycle {cycle_sec}s, target ({face_cx:.2f}, {face_cy:.2f})")
+        return zoomed
+    except Exception as e:
+        logger.warning(f"Smart zoom failed, using original video: {e}")
+        return video
+
+
+def _detect_face_center(video, num_samples=5):
+    """Sample frames from the video and detect the average face center position.
+    
+    Returns (cx, cy) as fractions of video dimensions (0..1), or (None, None)
+    if no face is detected.
+    """
+    if not HAS_CV2:
+        logger.warning("Smart zoom: OpenCV not available, skipping face detection")
+        return None, None
+
+    try:
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        if face_cascade.empty():
+            logger.warning("Smart zoom: failed to load face cascade classifier")
+            return None, None
+    except Exception as e:
+        logger.warning(f"Smart zoom: cascade init failed: {e}")
+        return None, None
+
+    # Sample frames at evenly spaced points in the first 60% of the video
+    # (speakers are usually visible in the first half)
+    sample_times = []
+    if video.duration <= 0:
+        return None, None
+    sample_start = min(2.0, max(0.0, video.duration * 0.1))
+    sample_end = min(video.duration * 0.6, max(sample_start, video.duration - 0.1))
+    for i in range(num_samples):
+        t = sample_start + (sample_end - sample_start) * i / max(num_samples - 1, 1)
+        t = max(0.0, min(t, max(0.0, video.duration - 0.01)))
+        sample_times.append(t)
+
+    face_centers = []
+    for t in sample_times:
+        try:
+            frame = video.get_frame(t)
+            # Convert to grayscale for face detection
+            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+
+            # Downscale for speed
+            scale = 480.0 / max(gray.shape[:2])
+            if scale < 1.0:
+                small = cv2.resize(gray, None, fx=scale, fy=scale)
+            else:
+                small = gray
+                scale = 1.0
+
+            faces = face_cascade.detectMultiScale(
+                small,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(30, 30),
+            )
+
+            if len(faces) > 0:
+                # Pick the largest face
+                areas = [w_f * h_f for (_, _, w_f, h_f) in faces]
+                best_idx = areas.index(max(areas))
+                x, y, w_f, h_f = faces[best_idx]
+
+                # Convert back to original coordinates, normalized to 0..1
+                cx = (x + w_f / 2) / scale / frame.shape[1]
+                cy = (y + h_f / 2) / scale / frame.shape[0]
+                face_centers.append((cx, cy))
+        except Exception:
+            continue
+
+    if not face_centers:
+        return None, None
+
+    # Average all detected face centers
+    avg_cx = sum(c[0] for c in face_centers) / len(face_centers)
+    avg_cy = sum(c[1] for c in face_centers) / len(face_centers)
+
+    return avg_cx, avg_cy
+
+
+# ─── Animated Text Cards ──────────────────────────────────────────────
+
+def _animate_text_card(clip, video, duration):
+    """Apply entrance/exit animation to a text card clip.
+    
+    Supported animations (configured in brand_profile.yaml → text_card_style.animation):
+      - "slide_up": slides up from below with fade
+      - "scale_bounce": scales from 0.8 to 1.0 with an elastic overshoot
+      - "fade_scale": fades in while scaling from 0.95 to 1.0 (subtle)
+      - "none": just applies standard crossfade (legacy behavior)
+    """
+    style = BRAND.get("text_card_style", {})
+    anim_type = style.get("animation", "slide_up")
+    anim_dur = style.get("animation_duration", 0.35)
+
+    if anim_type == "none" or duration < anim_dur * 3:
+        # Too short for animation or disabled — fallback to simple fade
+        return _apply_fade(clip, "in-out", duration)
+
+    # Clamp animation duration to something reasonable
+    anim_dur = min(anim_dur, duration / 4)
+
+    try:
+        if anim_type == "slide_up":
+            return _anim_slide_up(clip, video, duration, anim_dur)
+        elif anim_type == "scale_bounce":
+            return _anim_scale_bounce(clip, video, duration, anim_dur)
+        elif anim_type == "fade_scale":
+            return _anim_fade_scale(clip, video, duration, anim_dur)
+        else:
+            return _apply_fade(clip, "in-out", duration)
+    except Exception as e:
+        logger.warning(f"Text card animation '{anim_type}' failed: {e}, using fade fallback")
+        return _apply_fade(clip, "in-out", duration)
+
+
+def _anim_slide_up(clip, video, duration, anim_dur):
+    """Slide up from below + fade in, then slide down + fade out."""
+    slide_distance = video.h * 0.08  # 8% of video height
+
+    def position_func(t):
+        if t < anim_dur:
+            # Entrance: slide up from below
+            progress = _ease_out_cubic(t / anim_dur)
+            y_offset = slide_distance * (1.0 - progress)
+            return ("center", y_offset)
+        elif t > duration - anim_dur:
+            # Exit: slide down
+            progress = _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+            y_offset = slide_distance * progress
+            return ("center", y_offset)
+        else:
+            return ("center", 0)
+
+    def opacity_func(t):
+        if t < anim_dur:
+            return _ease_out_cubic(t / anim_dur)
+        elif t > duration - anim_dur:
+            return 1.0 - _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+        return 1.0
+
+    clip = clip.set_position(position_func)
+    return _apply_opacity_curve(clip, opacity_func)
+
+
+def _anim_scale_bounce(clip, video, duration, anim_dur):
+    """Scale from 0.85→1.02→1.0 (bounce) on entrance, scale down on exit, with opacity."""
+    bounce_dur = anim_dur * 1.4  # bounce takes a bit longer
+
+    def scale_func(t):
+        if t < bounce_dur:
+            progress = t / bounce_dur
+            # Overshoot curve: goes from 0.85 to 1.02 then settles at 1.0
+            if progress < 0.7:
+                s = 0.85 + 0.17 * _ease_out_cubic(progress / 0.7)
+            else:
+                s = 1.02 - 0.02 * _ease_in_out_cubic((progress - 0.7) / 0.3)
+            return s
+        elif t > duration - anim_dur:
+            progress = (t - (duration - anim_dur)) / anim_dur
+            s = 1.0 - 0.15 * _ease_in_cubic(progress)
+            return s
+        return 1.0
+
+    def opacity_func(t):
+        if t < anim_dur:
+            return min(1.0, _ease_out_cubic(t / anim_dur))
+        elif t > duration - anim_dur:
+            return 1.0 - _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+        return 1.0
+
+    clip = _apply_opacity_curve(clip, opacity_func)
+    clip = clip.resize(scale_func)
+    clip = clip.set_position(("center", "center"))
+    return clip
+
+
+def _anim_fade_scale(clip, video, duration, anim_dur):
+    """Subtle scale from 0.96→1.0 with fade (most minimal animation)."""
+
+    def scale_func(t):
+        if t < anim_dur:
+            progress = _ease_out_cubic(t / anim_dur)
+            return 0.96 + 0.04 * progress
+        elif t > duration - anim_dur:
+            progress = _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+            return 1.0 - 0.04 * progress
+        return 1.0
+
+    def opacity_func(t):
+        if t < anim_dur:
+            return _ease_out_cubic(t / anim_dur)
+        elif t > duration - anim_dur:
+            return 1.0 - _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+        return 1.0
+
+    clip = _apply_opacity_curve(clip, opacity_func)
+    clip = clip.resize(scale_func)
+    clip = clip.set_position(("center", "center"))
+    return clip
+
+
+# ─── Easing Functions ─────────────────────────────────────────────────
+
+def _ease_out_cubic(t):
+    """Decelerating: fast start, slow end."""
+    t = max(0.0, min(1.0, t))
+    return 1.0 - (1.0 - t) ** 3
+
+
+def _ease_in_cubic(t):
+    """Accelerating: slow start, fast end."""
+    t = max(0.0, min(1.0, t))
+    return t ** 3
+
+
+def _ease_in_out_cubic(t):
+    """Smooth S-curve."""
+    t = max(0.0, min(1.0, t))
+    if t < 0.5:
+        return 4 * t ** 3
+    return 1.0 - (-2 * t + 2) ** 3 / 2
+
+
+def _apply_opacity_curve(clip, opacity_func):
+    try:
+        base_mask = clip.mask
+        if base_mask is None:
+            base_mask = ColorClip(clip.size, color=1.0, ismask=True).set_duration(clip.duration)
+
+        def mask_filter(get_frame, t):
+            opacity = max(0.0, min(1.0, float(opacity_func(t))))
+            return get_frame(t) * opacity
+
+        return clip.set_mask(base_mask.fl(mask_filter))
+    except Exception as e:
+        logger.warning(f"Animated opacity failed, keeping clip fully visible: {e}")
+        return clip
 
 
 def _apply_ken_burns(clip, fx_type, duration):
@@ -538,10 +963,24 @@ def _create_info_card_clip(video, draft):
     if not info_cfg.get("enabled", False):
         return []
 
+    interval = info_cfg.get("interval_seconds", 90)
+    show_duration = info_cfg.get("show_duration", 8)
+    fade_dur = 0.5
+
     try:
         card_img = _generate_info_card_image(video.w, video.h, draft)
-        clip = ImageClip(str(card_img)).set_duration(video.duration).set_start(0)
-        return [clip]
+        clips = []
+
+        # Show at start (after 2 seconds)
+        t = 2.0
+        while t < video.duration - show_duration:
+            clip = ImageClip(str(card_img)).set_duration(show_duration).set_start(t)
+            clip = clip.crossfadein(fade_dur).crossfadeout(fade_dur)
+            clips.append(clip)
+            t += interval
+
+        logger.info(f"Created {len(clips)} periodic info card appearances (every {interval}s, {show_duration}s each)")
+        return clips
     except Exception as e:
         logger.error(f"Failed to create info card clip: {e}")
         return []
@@ -770,12 +1209,31 @@ def _normalize_audio(output_path):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
         if result.returncode == 0 and temp_path.exists():
-            temp_path.replace(output_path)
-            logger.info("Audio normalization complete")
+            replaced = False
+            for attempt in range(5):
+                try:
+                    temp_path.replace(output_path)
+                    replaced = True
+                    break
+                except PermissionError:
+                    time.sleep(0.5 * (attempt + 1))
+
+            if replaced:
+                logger.info("Audio normalization complete")
+            else:
+                logger.warning("Audio normalization completed but output file was locked; keeping unnormalized export")
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except PermissionError:
+                        logger.warning(f"Could not remove locked normalized temp file: {temp_path}")
         else:
             logger.warning(f"Audio normalization failed: {result.stderr[:200]}")
             if temp_path.exists():
-                temp_path.unlink()
+                try:
+                    temp_path.unlink()
+                except PermissionError:
+                    logger.warning(f"Could not remove locked normalized temp file: {temp_path}")
     except FileNotFoundError:
         logger.warning("ffmpeg not found, skipping audio normalization")
     except Exception as e:
@@ -799,6 +1257,8 @@ def _time_to_sec(time_str):
 
 def _hex_to_rgb(hex_color: str) -> tuple:
     hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c * 2 for c in hex_color)
     return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
 
@@ -857,9 +1317,10 @@ def _create_text_watermark_clip(video):
             color="white",
             method="label",
         ).set_duration(video.duration).set_start(0)
-        clip = clip.set_opacity(BRAND["watermark"].get("opacity", 0.1))
-        margin = BRAND["watermark"].get("margin", 20)
-        position = BRAND["watermark"].get("position", "bottom-right")
+        watermark_cfg = BRAND.get("watermark", {})
+        clip = clip.set_opacity(watermark_cfg.get("opacity", 0.1))
+        margin = watermark_cfg.get("margin", 20)
+        position = watermark_cfg.get("position", "bottom-right")
         return [_apply_position(clip, video, position, margin)]
     except Exception as e:
         logger.warning(f"Text watermark fallback failed: {e}")

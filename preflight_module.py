@@ -20,6 +20,10 @@ REQUIRED_PACKAGES = {
     "openai-whisper": "whisper",
 }
 
+OPTIONAL_PACKAGES = {
+    "opencv-python": "cv2",
+}
+
 
 def run_preflight(model_name: str | None = None, require_model: bool = True, print_report: bool = True) -> dict:
     report = {
@@ -112,6 +116,13 @@ def _check_packages(report: dict):
             report["info"].append(f"{package_name} {version} is installed.")
         except importlib.metadata.PackageNotFoundError:
             report["errors"].append(f"Python package '{package_name}' is not installed.")
+
+    for package_name in OPTIONAL_PACKAGES:
+        try:
+            version = importlib.metadata.version(package_name)
+            report["info"].append(f"{package_name} {version} is installed.")
+        except importlib.metadata.PackageNotFoundError:
+            report["warnings"].append(f"Optional package '{package_name}' is not installed. Smart zoom will use center fallback.")
 
     numpy_version = _package_version("numpy")
     torch_version = _package_version("torch")

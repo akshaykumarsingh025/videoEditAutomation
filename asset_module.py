@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from config import (
     COMFYUI_DIR,
+    COMFYUI_KEEP_ALIVE,
     COMFYUI_URL,
     COMFYUI_WORKFLOW,
     COMFYUI_STARTUP_TIMEOUT,
@@ -35,7 +36,22 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
         logger.info("No ComfyUI images to generate")
         return {"generated": [], "failed": []}
 
-    _force_free_vram_for_comfyui()
+    generated = []
+    pending_entries = []
+    for entry in comfyui_entries:
+        entry_id = entry["id"]
+        dst = _generated_image_path(entry_id, asset_prefix)
+        if dst.exists():
+            logger.info(f"Image already exists for entry {entry_id}, skipping generation: {dst}")
+            generated.append({"id": entry_id, "path": str(dst), "cached": True})
+        else:
+            pending_entries.append(entry)
+
+    if not pending_entries:
+        logger.info(f"All {len(generated)} ComfyUI images already exist; skipping ComfyUI startup")
+        return {"generated": generated, "failed": []}
+
+    comfyui_entries = pending_entries
 
     global comfyui_process, comfyui_started_by_pipeline
     comfyui_started_by_pipeline = False
@@ -43,6 +59,7 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
     if _wait_for_comfyui(timeout=3, quiet=True):
         logger.info("Using existing ComfyUI server")
     else:
+        _force_free_vram_for_comfyui()
         comfyui_process = _start_comfyui()
         comfyui_started_by_pipeline = comfyui_process is not None
 
@@ -51,17 +68,21 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
         return {"generated": [], "failed": [e["id"] for e in comfyui_entries]}
 
     if not _wait_for_comfyui(timeout=COMFYUI_STARTUP_TIMEOUT):
-        _stop_comfyui()
+        _finish_comfyui_session()
         return {"generated": [], "failed": [e["id"] for e in comfyui_entries]}
 
     if not COMFYUI_WORKFLOW.exists():
         logger.error(f"ComfyUI workflow not found: {COMFYUI_WORKFLOW}")
-        _stop_comfyui()
+        _finish_comfyui_session()
         return {"generated": [], "failed": [e["id"] for e in comfyui_entries]}
 
-    workflow_template = json.loads(COMFYUI_WORKFLOW.read_text(encoding="utf-8"))
+    try:
+        workflow_template = json.loads(COMFYUI_WORKFLOW.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error(f"Could not load ComfyUI workflow: {e}")
+        _finish_comfyui_session()
+        return {"generated": [], "failed": [e["id"] for e in comfyui_entries]}
 
-    generated = []
     failed = []
 
     for entry in comfyui_entries:
@@ -90,7 +111,7 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
             logger.error(f"ComfyUI generation failed for entry {entry_id}: {e}")
             failed.append(entry_id)
 
-    _stop_comfyui()
+    _finish_comfyui_session()
     logger.info(f"ComfyUI generation complete: {len(generated)} generated, {len(failed)} failed")
     return {"generated": generated, "failed": failed}
 
@@ -164,8 +185,8 @@ def _start_comfyui():
 
         proc = subprocess.Popen(
             [str(python_exe), "main.py", "--listen", "127.0.0.1", "--port", "8188"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             cwd=str(COMFYUI_DIR),
         )
         logger.info(f"ComfyUI process started (PID: {proc.pid})")
@@ -208,6 +229,20 @@ def _stop_comfyui():
     else:
         logger.info("ComfyUI was started externally or already stopped — skipping process kill")
         logger.info("If ComfyUI is still running, it will hold VRAM. Stop it manually if needed.")
+
+
+def _finish_comfyui_session():
+    global comfyui_process, comfyui_started_by_pipeline
+    if COMFYUI_KEEP_ALIVE:
+        if comfyui_started_by_pipeline:
+            logger.info("Leaving ComfyUI running for the rest of the pipeline (COMFYUI_KEEP_ALIVE=true)")
+        else:
+            logger.info("ComfyUI was external/already running; leaving it running")
+        comfyui_process = None
+        comfyui_started_by_pipeline = False
+        return
+
+    _stop_comfyui()
 
 
 def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset_prefix: str = "", is_broll: bool = False) -> Path | None:
@@ -278,7 +313,7 @@ def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset
                             return None
 
                         src = comfyui_output / subfolder / filename
-                        dst = PATHS["gen_images"] / f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}.png"
+                        dst = _generated_image_path(entry_id, asset_prefix)
 
                         logger.info(f"Looking for ComfyUI output: {src}")
                         if src.exists():
@@ -585,6 +620,10 @@ def _entry_token(entry_id) -> str:
         return f"{int(entry_id):03d}"
     except (TypeError, ValueError):
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(entry_id))
+
+
+def _generated_image_path(entry_id, asset_prefix: str = "") -> Path:
+    return PATHS["gen_images"] / f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}.png"
 
 
 def _crop_to_16_9(img: Image.Image, target_size: tuple) -> Image.Image:

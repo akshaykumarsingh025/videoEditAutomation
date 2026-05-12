@@ -1,5 +1,6 @@
 moviepy==1.0.3
 numpy<2
+opencv-python>=4.8
 openai-whisper
 Pillow>=10,<13
 PyYAML>=6
