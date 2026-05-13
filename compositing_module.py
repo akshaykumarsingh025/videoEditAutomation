@@ -598,38 +598,21 @@ def _create_watermark_clip(video, timeline_data, draft):
 # ─── Smart Zoom (Face-Tracking Subtle Zoom) ───────────────────────────
 
 def _apply_smart_zoom(video, timeline_data, draft):
-    """Apply subtle zoom toward the speaker's face during talking-head segments.
+    """Apply subtle centered zoom during talking-head segments.
     
-    The zoom oscillates slowly (zoom-in → zoom-out → repeat) so the video
-    feels alive even when the speaker is stationary. The zoom target is the
-    detected face center, falling back to frame center if no face is found.
+    The zoom oscillates slowly (zoom-in -> zoom-out -> repeat) centered on
+    the frame so the video feels alive without visible panning artifacts.
     """
     zoom_cfg = BRAND.get("smart_zoom", {})
     if not zoom_cfg.get("enabled", False):
         return video
 
-    max_zoom = zoom_cfg.get("max_zoom", 1.06)
+    max_zoom = zoom_cfg.get("max_zoom", 1.04)
     if max_zoom <= 1.0:
         return video
 
     cycle_sec = max(float(zoom_cfg.get("cycle_seconds", 18)), 0.1)
-    num_samples = zoom_cfg.get("face_detect_samples", 5)
-    fallback_center = zoom_cfg.get("fallback_center", True)
 
-    # Detect face center from sampled frames
-    face_cx, face_cy = _detect_face_center(video, num_samples)
-
-    if face_cx is None:
-        if fallback_center:
-            face_cx, face_cy = 0.5, 0.45  # slightly above center (typical head position)
-            logger.info("Smart zoom: no face detected, using default center (0.5, 0.45)")
-        else:
-            logger.info("Smart zoom: no face detected and fallback disabled, skipping")
-            return video
-    else:
-        logger.info(f"Smart zoom: face center detected at ({face_cx:.2f}, {face_cy:.2f})")
-
-    # Build overlay intervals from timeline (when B-roll covers the video)
     broll_intervals = []
     if timeline_data and "timeline" in timeline_data:
         for entry in timeline_data["timeline"]:
@@ -638,18 +621,11 @@ def _apply_smart_zoom(video, timeline_data, draft):
                 d = entry.get("duration", 5)
                 broll_intervals.append((t, t + d))
 
-    w, h = video.w, video.h
-    target_px = face_cx * w
-    target_py = face_cy * h
-
     def zoom_filter(get_frame, t):
-        """Per-frame zoom function. Applies subtle oscillating zoom toward face."""
-        # Check if B-roll is active at this time (no zoom needed)
         for bstart, bend in broll_intervals:
             if bstart <= t <= bend:
                 return get_frame(t)
 
-        # Full cycle: 1.0 -> max_zoom -> 1.0.
         phase = (t % cycle_sec) / cycle_sec
         zoom = 1.0 + (max_zoom - 1.0) * (0.5 - 0.5 * math.cos(phase * 2 * math.pi))
 
@@ -663,15 +639,11 @@ def _apply_smart_zoom(video, timeline_data, draft):
             pass
         fh, fw = frame.shape[:2]
 
-        # Compute crop region centered on face with zoom
-        crop_w = max(1, min(fw, int(round(fw / zoom))))
-        crop_h = max(1, min(fh, int(round(fh / zoom))))
+        crop_w = max(1, int(round(fw / zoom)))
+        crop_h = max(1, int(round(fh / zoom)))
 
-        # Center crop on face position, clamped to frame bounds
-        cx = int(target_px * (fw / w))
-        cy = int(target_py * (fh / h))
-        x1 = max(0, min(cx - crop_w // 2, fw - crop_w))
-        y1 = max(0, min(cy - crop_h // 2, fh - crop_h))
+        x1 = (fw - crop_w) // 2
+        y1 = (fh - crop_h) // 2
         x2 = x1 + crop_w
         y2 = y1 + crop_h
 
@@ -679,12 +651,10 @@ def _apply_smart_zoom(video, timeline_data, draft):
         if cropped.size == 0:
             return frame
 
-        # Resize back to original dimensions
         try:
             import cv2 as _cv2
             resized = _cv2.resize(cropped, (fw, fh), interpolation=_cv2.INTER_LINEAR)
         except Exception:
-            # Fallback: use Pillow if cv2 fails
             from PIL import Image as _PILImage
             import numpy as np
             pil_img = _PILImage.fromarray(cropped)
@@ -698,7 +668,7 @@ def _apply_smart_zoom(video, timeline_data, draft):
         zoomed = zoomed.set_duration(video.duration)
         if video.audio:
             zoomed = zoomed.set_audio(video.audio)
-        logger.info(f"Smart zoom applied: max {max_zoom:.0%}, cycle {cycle_sec}s, target ({face_cx:.2f}, {face_cy:.2f})")
+        logger.info(f"Smart zoom applied: max {max_zoom:.0%}, cycle {cycle_sec}s, centered")
         return zoomed
     except Exception as e:
         logger.warning(f"Smart zoom failed, using original video: {e}")

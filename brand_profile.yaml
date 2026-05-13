@@ -78,10 +78,8 @@ lower_third_style:
 
 smart_zoom:
   enabled: true
-  max_zoom: 1.06              # subtle 6% zoom (1.0 = disabled)
+  max_zoom: 1.04              # subtle 4% centered zoom (1.0 = disabled)
   cycle_seconds: 18           # seconds per zoom-in or zoom-out phase
-  face_detect_samples: 5      # frames to sample for face detection
-  fallback_center: true       # zoom toward center if no face found
 
 watermark:
   logo: "assets/templates/brand_logo.png"

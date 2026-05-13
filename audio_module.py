@@ -83,20 +83,23 @@ def transcribe(audio_path: str | Path) -> dict:
 
     _unload_whisper(model)
 
+    transcript_text = result["text"].strip()
+    transcript_text = _transliterate_to_hinglish(transcript_text)
+    segments = _transliterate_segments(result["segments"])
+
     base_name = audio_path.stem
     transcript_path = PATHS["temp"] / f"{base_name}_transcript.txt"
     srt_path = PATHS["temp"] / f"{base_name}.srt"
     words_path = PATHS["temp"] / f"{base_name}_words.json"
 
-    transcript_text = result["text"].strip()
     transcript_path.write_text(transcript_text, encoding="utf-8")
     logger.info(f"Transcript saved: {transcript_path}")
 
-    srt_content = _format_srt(result["segments"])
+    srt_content = _format_srt(segments)
     srt_path.write_text(srt_content, encoding="utf-8")
     logger.info(f"SRT saved: {srt_path}")
 
-    words_data = _extract_words(result["segments"])
+    words_data = _extract_words(segments)
     words_path.write_text(json.dumps(words_data, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"Word timestamps saved: {words_path}")
 
@@ -105,7 +108,7 @@ def transcribe(audio_path: str | Path) -> dict:
         "srt_path": srt_path,
         "words_path": words_path,
         "transcript_text": transcript_text,
-        "duration": result["segments"][-1]["end"] if result["segments"] else 0,
+        "duration": segments[-1]["end"] if segments else 0,
     }
 
 
@@ -271,3 +274,31 @@ def _extract_words(segments: list) -> list:
                     "end": round(w["end"], 3),
                 })
     return words
+
+
+def _transliterate_to_hinglish(text: str) -> str:
+    if not text:
+        return text
+    has_devanagari = any("\u0900" <= c <= "\u097F" for c in text)
+    if not has_devanagari:
+        return text
+    try:
+        from indic_transliteration import sanscript
+        from indic_transliteration.sanscript import transliterate
+        result = transliterate(text, sanscript.DEVANAGARI, sanscript.ITRANS)
+        logger.info("Transliterated Devanagari text to Hinglish (ITRANS)")
+        return result
+    except Exception as e:
+        logger.warning(f"Transliteration failed, keeping original text: {e}")
+        return text
+
+
+def _transliterate_segments(segments: list) -> list:
+    for seg in segments:
+        if "text" in seg:
+            seg["text"] = _transliterate_to_hinglish(seg["text"])
+        if "words" in seg:
+            for w in seg["words"]:
+                if "word" in w:
+                    w["word"] = _transliterate_to_hinglish(w["word"])
+    return segments
