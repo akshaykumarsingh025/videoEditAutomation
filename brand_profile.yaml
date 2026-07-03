@@ -66,6 +66,7 @@ text_card_style:
   border_color: "#E8734A"
   animation: "slide_up"        # "slide_up", "scale_bounce", "fade_scale", "none"
   animation_duration: 0.35     # seconds for entrance/exit animation
+  y_position_ratio: 0.72       # text card vertical position (0=top, 1=bottom) — below face area
 
 lower_third_style:
   bg_color: "#0A1628"
@@ -94,10 +95,10 @@ broll_fx:
   zoom_duration: "full"
 
 image_generation:
-  style: "realistic editorial photo"
-  positive_suffix: "realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
-  negative_prompt: "extra fingers, missing fingers, fused fingers, deformed hands, bad hands, extra hands, multiple hands, extra arms, extra limbs, distorted limbs, twisted fingers, two fingers, three fingers, long fingers, broken fingers, close up hands, close up fingers, text, words, letters, watermark, logo, signature, blurry, low quality, deformed face, distorted face"
-  safe_scene_fallback: "an Indian woman patient sitting in a clean clinic while a female doctor talks to her, calm realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
+  style: "ultra-realistic photograph"
+  positive_suffix: "ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
+  negative_prompt: "extra fingers, missing fingers, fused fingers, deformed hands, bad hands, extra hands, multiple hands, extra arms, extra limbs, distorted limbs, twisted fingers, two fingers, three fingers, long fingers, broken fingers, close up hands, close up fingers, text, words, letters, watermark, logo, signature, blurry, low quality, deformed face, distorted face, watercolor, painting, sketch, cartoon, anime, illustration"
+  safe_scene_fallback: "an Indian woman patient sitting in a clean clinic while a female doctor talks to her, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
   avoid_hand_actions: true
 
 music:

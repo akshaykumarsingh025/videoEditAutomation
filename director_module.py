@@ -31,42 +31,56 @@ CRITICAL COVERAGE RULE:
 - If the video is 10 minutes long, you need overlays at 1:00, 2:00, 3:00, ... 9:00 etc.
 
 BROLL_IMAGE PROMPT RULES (CRITICAL - READ CAREFULLY):
-- This is the MOST IMPORTANT action. Use it whenever the speaker mentions a medical concept or topic.
+- This is the MOST IMPORTANT action. Use it whenever the speaker mentions a specific action, situation, or visual concept.
 - The image will REPLACE the video FULL SCREEN while audio continues, like real B-roll editing.
-- KEEP PROMPTS SIMPLE, REALISTIC, CONCRETE, AND PEOPLE-FOCUSED. The ZImage AI model does poorly with abstract concepts, diagrams, tiny objects, close-up hands, and complex scenes.
+- THE PROMPT MUST DIRECTLY ILLUSTRATE THE EXACT SENTENCE BEING SPOKEN. Not a generic clinic scene — the SPECIFIC action or situation the speaker describes.
+- Example: If speaker says "gramin mein mahila bahar nahi nikalti dhoop mein" → prompt: "an Indian village woman walking on a dusty road under scorching harsh sunlight shielding her face with her saree pallu, extreme heat haze visible, ultra-realistic photograph..."
+- Example: If speaker says "paani piye toh thanda paani piye" → prompt: "an Indian woman drinking a glass of cold water with condensation droplets on the glass, refreshing cool expression, kitchen background, ultra-realistic photograph..."
+- Example: If speaker says "exercise karein" → prompt: "an Indian woman doing yoga stretches in a park early morning, peaceful expression, ultra-realistic photograph..."
+- Example: If speaker says "pregnant mahila ko rest chahiye" → prompt: "a pregnant Indian woman lying comfortably on a bed with supportive pillows, peaceful rest, ultra-realistic photograph..."
 
-MANDATORY: Every BROLL_IMAGE prompt MUST describe a SCENE with a PERSON (woman/girl/female doctor/nurse/patient) doing something specific.
-NEVER generate prompts without a person. NEVER generate prompts for abstract concepts.
+MANDATORY: Every BROLL_IMAGE prompt MUST describe a SPECIFIC SCENE directly related to what is being said at that timestamp. Match the action, setting, and mood of the spoken sentence.
+ALL PEOPLE IN PROMPTS MUST BE WOMEN. Always use "Indian woman", "young woman", "female doctor", "girl", "lady". NEVER use "man", "boy", "male", "gentleman", "guy" or any male terms. This is a women's health channel.
+NEVER use generic "doctor in clinic" prompts unless the speaker is literally talking about a doctor in a clinic.
 
-TEMPLATE for every prompt: "[one person or two people] [simple script-based action] [in simple setting], realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
+TEMPLATE: "[person doing the exact action described by speaker] [in the specific setting mentioned or implied] [with relevant mood/atmosphere], ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
 
 HAND SAFETY:
 - Avoid prompts focused on hands, fingers, injections, syringes, vials, reports, papers, phones, or small objects.
 - Do not say "holding", "showing", "pointing", "touching", "folded hands", or "close up of hands".
-- Prefer "doctor talking to patient", "patient listening", "woman sitting calmly", "doctor standing beside patient".
+- Prefer full body or waist-up shots showing the person IN ACTION related to the spoken sentence.
 - Use medium shot or waist-up shot, never close-up hands.
 
-CONCRETE EXAMPLES OF GOOD PROMPTS:
-- "a young Indian woman sitting in a clean clinic waiting room looking calm, realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
-- "a female doctor talking to an Indian woman patient in a modern clinic, realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
-- "a pregnant Indian woman sitting peacefully in a bright clinic room, realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
-- "an Indian woman patient listening carefully to a female doctor across a clinic desk, realistic editorial photo, natural clinic lighting, medium shot, simple clean background, hands relaxed or out of frame, no text, no words, no letters"
-- "a middle-aged Indian woman looking relieved after a health checkup in a clinic, realistic editorial photo, natural clinic lighting, medium shot, hands relaxed or out of frame, no text, no words, no letters"
+CONCRETE EXAMPLES OF GOOD PROMPTS (sentence-matched, WOMEN ONLY):
+- Speaker says "mahila ko dhoop mein bahar mat nikalna": "an Indian woman standing at a doorway looking out at bright harsh sunlight, hesitant to step outside, extreme summer heat, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
+- Speaker says "thanda paani piye": "an Indian woman drinking cold water from a steel glass, condensation on the glass, relieved refreshed expression, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
+- Speaker says "bache ki delivery ke baam rest zaroori hai": "a new Indian mother resting peacefully in a hospital bed with her newborn beside her, soft warm lighting, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
+- Speaker says "exercise karein pregnancy mein": "a pregnant Indian woman doing gentle prenatal yoga stretches in a bright room, calm focused expression, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
+- Speaker says "tension mat lo": "an Indian woman sitting peacefully in a garden with eyes closed taking deep breaths, meditation, relaxing atmosphere, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
 
 NEVER USE THESE (THE MODEL CANNOT RENDER THEM):
 - "infographic", "diagram", "chart", "statistics", "3D animation", "cross-section", "anatomical illustration", "medical diagram", "virus particles", "molecular structure", "flowchart", "comparison table", "X-ray", "microscope view", "abstract representation", "screenshot", "UI", "app interface", "text overlay", "title card", "label", "close up hands", "fingers"
 
 DURATION: 5-6 seconds per BROLL_IMAGE. Keep images short and impactful. Change them frequently to keep viewer engaged.
 Position: "center". Always set fade: "in-out". Set fx: "ken_burns_in" or "ken_burns_out" (alternate between them).
-Generate AT LEAST 12-18 BROLL_IMAGE entries per video. Use one every 30-45 seconds. Cover the ENTIRE video from start to finish.
+Generate AT LEAST 15-25 BROLL_IMAGE entries per video. Use one every 20-30 seconds. Cover the ENTIRE video from start to finish.
+EVERY BROLL must match what is being said at that exact timestamp. Read the transcript carefully and create prompts that VISUALLY SHOW the action being described.
 
 LOWER_THIRD: Use for speaker introductions only. Position: "bottom-left". Duration: 5-7 seconds.
 
-TEXT_CARD: Quick pop-up overlays for key points the doctor mentions. Use these VERY FREQUENTLY — every time the doctor says a specific point like "pehla problem hai periods ka pain" or "HPV ka matlab hai Human Papillomavirus", add a quick 3-4 second TEXT_CARD that pops in and out fast. These should feel like quick emphasis pops, not lingering cards. Generate AT LEAST 15-25 TEXT_CARD entries per video — one every 20-30 seconds. Short punchy Hinglish statements. Position: "center". Duration: 3-4 seconds. Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain", "Pap Smear Zaroori Hai!".
+TEXT_CARD: These are the PRIMARY way to keep the video engaging. Use them CONSTANTLY — for EVERY important point, fact, warning, recommendation, or key phrase the doctor says.
+- Every time the doctor states a fact: TEXT_CARD
+- Every time the doctor gives advice: TEXT_CARD
+- Every time the doctor mentions a symptom, treatment, or medicine name: TEXT_CARD
+- Every time the doctor says something surprising or important: TEXT_CARD
+- Every time the doctor says a number (age, duration, dosage): TEXT_CARD
+Generate AT LEAST 25-40 TEXT_CARD entries per video — one every 10-15 seconds. These should be VERY frequent.
+Short punchy Hinglish statements. Position: "center". Duration: 3-4 seconds.
+Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain", "Pap Smear Zaroori Hai!", "Tension Mat Lo!", "Thanda Paani Piye!", "Dhoop Mein Mat Niklein!", "Exercise Zaroori Hai", "Har Roz 2L Paani".
 
 Do NOT place overlays during the first 3 seconds of video.
 Space overlays at least 2 seconds apart.
-Prefer BROLL_IMAGE over everything else — show the viewer what the doctor is talking about.
+ALTERNATE between BROLL_IMAGE and TEXT_CARD to keep the video dynamic — never have more than 2 of the same type in a row.
 Do not invent medical claims. Visuals must support what the speaker actually says.
 Include a "hero_moments" array: 2-3 segments of 20-40 seconds each that would work as YouTube Shorts/Reels
 Include an "seo" object with: title (Hinglish), description (Hinglish, 2-3 sentences), tags (array of 8-12 Hinglish tags), chapters (array of {time, title})
@@ -74,7 +88,7 @@ Include an "seo" object with: title (Hinglish), description (Hinglish, 2-3 sente
 OUTPUT FORMAT:
 {
   "video_info": {"source": "", "duration_sec": 0, "language": "hinglish"},
-  "silence_trim": true,
+  "silence_trim": false,
   "timeline": [...],
   "hero_moments": [...],
   "seo": {"title": "", "description": "", "tags": [], "chapters": []}
@@ -288,7 +302,7 @@ BANNED_PROMPT_TERMS = [
     "cutaway", "split screen", "before and after",
 ]
 
-WATERCOLOR_SUFFIX = ", soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+WATERCOLOR_SUFFIX = ", ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
 NO_TEXT_SUFFIX = ", no text, no words, no letters, no watermark, no signature, no writing"
 
 
@@ -315,7 +329,7 @@ def _sanitize_broll_prompts(timeline_data: dict) -> dict:
         prompt = re.sub(r"\s{2,}", " ", prompt).strip().strip(",").strip()
 
         # Ensure watercolor style suffix
-        if "watercolor" not in prompt.lower():
+        if "ultra-realistic" not in prompt.lower() and "photorealistic" not in prompt.lower():
             prompt = prompt.rstrip(",. ") + WATERCOLOR_SUFFIX
 
         # Ensure no-text suffix
@@ -369,7 +383,7 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
     times = [_t(e) for e in all_visual]
 
     # Build list of gap intervals (>45s) that need filling
-    GAP_THRESHOLD = 45  # seconds
+    GAP_THRESHOLD = 20  # seconds
     gaps = []
 
     # Check gap from start
@@ -415,12 +429,12 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
 
     # Safe generic BROLL prompts for filler (rotate through these)
     FILLER_BROLL_PROMPTS = [
-        "a female doctor in a white coat smiling warmly at the camera in a modern clinic, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
-        "a young Indian woman sitting comfortably and listening attentively in a doctor's office, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
-        "a kind female doctor writing notes while talking to a woman patient, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
-        "a young Indian couple holding hands supportively in a hospital waiting area, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
-        "a female doctor showing care and empathy while examining a patient gently, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
-        "an Indian woman looking hopeful and relaxed after visiting a female doctor, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters",
+        "a female doctor in a white coat smiling warmly at the camera in a modern clinic, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters",
+        "a young Indian woman sitting comfortably and listening attentively in a doctor's office, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters",
+        "a kind female doctor writing notes while talking to a woman patient, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters",
+        "a young Indian couple holding hands supportively in a hospital waiting area, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters",
+        "a female doctor showing care and empathy while examining a patient gently, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters",
+        "an Indian woman looking hopeful and relaxed after visiting a female doctor, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters",
     ]
 
     FILLER_TEXT_CARDS = [
@@ -432,6 +446,13 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
         "Aapki Sehat, Humari Zimmedari",
         "Timely Treatment Se Fayda",
         "Questions? Doctor Se Poochein!",
+        "Savdhan Rahein, Sehat Banaein!",
+        "Jaankari Hi Bachav Hai",
+        "Health First!",
+        "Dhyan Do, Sehat Banao",
+        "Time Pe Doctor Ko Dikhayein",
+        "Pehla Kadam: Jaankari",
+        "Apna Khayal Rakhein!",
     ]
 
     broll_idx = 0
@@ -442,11 +463,9 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
         logger.info(f"Auto-filling gap: {gap_start:.0f}s → {gap_end:.0f}s ({gap_duration:.0f}s)")
 
         # Fill the gap by placing entries every ~30s
-        t = gap_start + 5  # small offset from gap start
-        while t < gap_end - 10:
-            # Alternate: BROLL then TEXT_CARD
-            if inserted_count % 2 == 0:
-                # Insert a BROLL_IMAGE
+        t = gap_start + 3
+        while t < gap_end - 5:
+            if inserted_count % 3 != 2:
                 h = int(t // 3600)
                 m = int((t % 3600) // 60)
                 s = int(t % 60)
@@ -462,9 +481,8 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
                     "_auto_filled": True,
                 }
                 broll_idx += 1
-                t += 30  # next entry ~30s later
+                t += 15
             else:
-                # Insert a TEXT_CARD
                 h = int(t // 3600)
                 m = int((t % 3600) // 60)
                 s = int(t % 60)
@@ -479,7 +497,7 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
                     "_auto_filled": True,
                 }
                 text_idx += 1
-                t += 25  # next entry ~25s later
+                t += 10
 
             timeline.append(entry)
             filler_id += 1

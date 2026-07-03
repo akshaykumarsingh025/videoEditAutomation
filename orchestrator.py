@@ -12,6 +12,7 @@ from config import (
     PATHS,
     PROGRESS_FILE,
     ensure_dirs,
+    clean_temp_for_video,
     setup_logging,
     EXPORT_PROFILES,
     OLLAMA_MODEL,
@@ -90,6 +91,7 @@ def run_pipeline(
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
         save_progress(progress)
+        clean_temp_for_video(input_path.stem)
 
     needs_director = not is_completed(progress, 2) and 2 not in skip_phases
     selected_model = model_name or OLLAMA_MODEL

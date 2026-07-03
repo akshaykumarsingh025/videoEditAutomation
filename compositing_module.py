@@ -57,8 +57,6 @@ def composite_video(
     logger.info(f"Loading source video: {input_video}")
     video = VideoFileClip(str(input_video))
 
-    video = _apply_silence_cuts(video, silence_cuts)
-
     if draft:
         target_w, target_h = DRAFT_RESOLUTION
         logger.info(f"Draft mode: rendering at {target_w}x{target_h}")
@@ -74,7 +72,6 @@ def composite_video(
     clips.extend(_create_timeline_clips(video, timeline_data, draft, asset_prefix))
     clips.extend(_create_watermark_clip(video, timeline_data, draft))
     clips.extend(_create_info_card_clip(video, draft))
-    clips.extend(_create_subtitle_clips(video, srt_path, draft, asset_prefix))
 
     logger.info("Compositing all layers...")
     final = CompositeVideoClip(clips, size=(target_w, target_h))
@@ -505,9 +502,6 @@ def _create_timeline_clips(video, timeline_data, draft, asset_prefix=""):
                 clip = clip.set_position(("center", "center"))
                 clip = _apply_fade(clip, fade or "in-out", duration)
 
-                if fx.startswith("ken_burns"):
-                    clip = _apply_ken_burns(clip, fx, duration)
-
             elif entry["action"] == "COMFYUI_PROMPT":
                 img_path = _find_asset(PATHS["gen_images"], asset_prefix, "gen", entry["id"], [".png"])
                 if not img_path.exists():
@@ -755,23 +749,14 @@ def _detect_face_center(video, num_samples=5):
 # ─── Animated Text Cards ──────────────────────────────────────────────
 
 def _animate_text_card(clip, video, duration):
-    """Apply entrance/exit animation to a text card clip.
-    
-    Supported animations (configured in brand_profile.yaml → text_card_style.animation):
-      - "slide_up": slides up from below with fade
-      - "scale_bounce": scales from 0.8 to 1.0 with an elastic overshoot
-      - "fade_scale": fades in while scaling from 0.95 to 1.0 (subtle)
-      - "none": just applies standard crossfade (legacy behavior)
-    """
     style = BRAND.get("text_card_style", {})
     anim_type = style.get("animation", "slide_up")
     anim_dur = style.get("animation_duration", 0.35)
 
     if anim_type == "none" or duration < anim_dur * 3:
-        # Too short for animation or disabled — fallback to simple fade
-        return _apply_fade(clip, "in-out", duration)
+        clip = _apply_fade(clip, "in-out", duration)
+        return clip.set_position(("center", "center"))
 
-    # Clamp animation duration to something reasonable
     anim_dur = min(anim_dur, duration / 4)
 
     try:
@@ -782,24 +767,21 @@ def _animate_text_card(clip, video, duration):
         elif anim_type == "fade_scale":
             return _anim_fade_scale(clip, video, duration, anim_dur)
         else:
-            return _apply_fade(clip, "in-out", duration)
+            return _apply_fade(clip, "in-out", duration).set_position(("center", "center"))
     except Exception as e:
         logger.warning(f"Text card animation '{anim_type}' failed: {e}, using fade fallback")
-        return _apply_fade(clip, "in-out", duration)
+        return _apply_fade(clip, "in-out", duration).set_position(("center", "center"))
 
 
 def _anim_slide_up(clip, video, duration, anim_dur):
-    """Slide up from below + fade in, then slide down + fade out."""
-    slide_distance = video.h * 0.08  # 8% of video height
+    slide_distance = video.h * 0.06
 
     def position_func(t):
         if t < anim_dur:
-            # Entrance: slide up from below
             progress = _ease_out_cubic(t / anim_dur)
             y_offset = slide_distance * (1.0 - progress)
             return ("center", y_offset)
         elif t > duration - anim_dur:
-            # Exit: slide down
             progress = _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
             y_offset = slide_distance * progress
             return ("center", y_offset)
@@ -818,8 +800,7 @@ def _anim_slide_up(clip, video, duration, anim_dur):
 
 
 def _anim_scale_bounce(clip, video, duration, anim_dur):
-    """Scale from 0.85→1.02→1.0 (bounce) on entrance, scale down on exit, with opacity."""
-    bounce_dur = anim_dur * 1.4  # bounce takes a bit longer
+    bounce_dur = anim_dur * 1.4
 
     def scale_func(t):
         if t < bounce_dur:
@@ -850,7 +831,6 @@ def _anim_scale_bounce(clip, video, duration, anim_dur):
 
 
 def _anim_fade_scale(clip, video, duration, anim_dur):
-    """Subtle scale from 0.96→1.0 with fade (most minimal animation)."""
 
     def scale_func(t):
         if t < anim_dur:
@@ -925,6 +905,34 @@ def _apply_ken_burns(clip, fx_type, duration):
         return zoom_start + (zoom_end - zoom_start) * progress
 
     clip = clip.resize(zoom_func)
+    return clip
+
+
+def _apply_face_zoom(clip, video, duration):
+    """Slow subtle zoom toward the upper-center of frame (face area).
+
+    Zooms from 1.0 to 1.08 over the clip duration, panning slightly
+    upward so the zoom gravitates toward a typical face position.
+    """
+    max_zoom = 1.08
+    pan_y_ratio = -0.03
+
+    def zoom_func(t):
+        progress = t / max(duration, 0.01)
+        return 1.0 + (max_zoom - 1.0) * _ease_in_out_cubic(progress)
+
+    clip = clip.resize(zoom_func)
+
+    h = clip.h
+    y_offset = int(h * pan_y_ratio)
+
+    def position_func(t):
+        progress = t / max(duration, 0.01)
+        eased = _ease_in_out_cubic(progress)
+        dy = int(y_offset * eased)
+        return ("center", dy)
+
+    clip = clip.set_position(position_func)
     return clip
 
 

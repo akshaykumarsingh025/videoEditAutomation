@@ -37,21 +37,13 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
         return {"generated": [], "failed": []}
 
     generated = []
-    pending_entries = []
+
     for entry in comfyui_entries:
         entry_id = entry["id"]
         dst = _generated_image_path(entry_id, asset_prefix)
         if dst.exists():
-            logger.info(f"Image already exists for entry {entry_id}, skipping generation: {dst}")
-            generated.append({"id": entry_id, "path": str(dst), "cached": True})
-        else:
-            pending_entries.append(entry)
-
-    if not pending_entries:
-        logger.info(f"All {len(generated)} ComfyUI images already exist; skipping ComfyUI startup")
-        return {"generated": generated, "failed": []}
-
-    comfyui_entries = pending_entries
+            dst.unlink()
+            logger.info(f"Deleted old image for entry {entry_id}: {dst}")
 
     global comfyui_process, comfyui_started_by_pipeline
     comfyui_started_by_pipeline = False
@@ -92,8 +84,9 @@ def generate_comfyui_images(timeline_entries: list, asset_prefix: str = "") -> d
 
         if is_broll:
             prompt = raw_prompt
-            if "watercolor" not in prompt.lower():
-                prompt = f"{raw_prompt}, soft watercolor painting style, warm pastel colors, gentle lighting, no text, no words, no letters"
+            prompt = _force_women_only(prompt)
+            if "ultra-realistic" not in prompt.lower() and "photorealistic" not in prompt.lower():
+                prompt = f"{prompt}, ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus"
             if "no text" not in prompt.lower():
                 prompt = f"{prompt}, no text, no words, no letters, no watermark, no signature, no writing"
         else:
@@ -246,25 +239,107 @@ def _finish_comfyui_session():
 
 
 def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset_prefix: str = "", is_broll: bool = False) -> Path | None:
-    workflow = copy.deepcopy(workflow_template)
+    clean_prompt = _clean_prompt_for_comfyui(prompt)
 
-    workflow["67"]["inputs"]["text"] = prompt
-    workflow["69"]["inputs"]["seed"] = random.randint(0, 2**32 - 1)
-    workflow["9"]["inputs"]["filename_prefix"] = f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}"
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        workflow = copy.deepcopy(workflow_template)
+        current_prompt = clean_prompt if attempt == 1 else _simplify_prompt(clean_prompt)
 
-    workflow["71"]["inputs"]["text"] = "text, words, letters, watermark, Chinese characters, Japanese text, Korean text, signature, logo, caption, title, subtitle, stamp, date, name, watermark text, any writing, any script, any alphabet"
+        workflow["30:19"]["inputs"]["value"] = current_prompt
+        workflow["30:3"]["inputs"]["seed"] = random.randint(0, 2**32 - 1)
+        workflow["29"]["inputs"]["filename_prefix"] = f"{_asset_prefix(asset_prefix)}gen_{_entry_token(entry_id)}"
 
+        logger.info(f"ComfyUI attempt {attempt} for entry {entry_id}: {current_prompt[:100]}...")
+
+        result = _submit_and_poll(workflow, entry_id, asset_prefix, is_broll)
+        if result is not None:
+            return result
+
+        if attempt < RETRY_ATTEMPTS:
+            logger.warning(f"Retrying entry {entry_id} with simplified prompt (attempt {attempt + 1})")
+            time.sleep(2)
+
+    logger.error(f"All {RETRY_ATTEMPTS} attempts failed for entry {entry_id}")
+    return None
+
+
+def _force_women_only(prompt: str) -> str:
+    male_terms = [
+        (r'\bman\b', 'woman'), (r'\bMan\b', 'Woman'),
+        (r'\bmen\b', 'women'), (r'\bMen\b', 'Women'),
+        (r'\bboy\b', 'girl'), (r'\bBoy\b', 'Girl'),
+        (r'\bboys\b', 'girls'), (r'\bBoys\b', 'Girls'),
+        (r'\bmale\b', 'female'), (r'\bMale\b', 'Female'),
+        (r'\bgentleman\b', 'lady'), (r'\bGentleman\b', 'Lady'),
+        (r'\bguy\b', 'woman'), (r'\bGuy\b', 'Woman'),
+        (r'\bguy\b', 'woman'), (r'\bguys\b', 'women'),
+        (r'\bhe\b', 'she'), (r'\bHe\b', 'She'),
+        (r'\bhim\b', 'her'), (r'\bhis\b', 'her'),
+    ]
+    for pattern, replacement in male_terms:
+        prompt = re.sub(pattern, replacement, prompt, flags=re.IGNORECASE)
+    has_female = any(w in prompt.lower() for w in ['woman', 'women', 'girl', 'lady', 'female', 'mother', 'sister', 'daughter', 'wife', 'aunt', 'pregnant'])
+    if not has_female:
+        prompt = f"an Indian woman {prompt.lstrip('aAanAn ')}"
+    return prompt
+
+
+def _clean_prompt_for_comfyui(prompt: str) -> str:
+    cleaned = prompt
+    for ch in ['"', "'", "`", "\\", "<", ">", "{", "}", "[", "]", "|"]:
+        cleaned = cleaned.replace(ch, "")
+    cleaned = re.sub(r'[^\x20-\x7E\n,]', ' ', cleaned)
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+    if len(cleaned) > 450:
+        cleaned = cleaned[:447].rsplit(',', 1)[0].rstrip(', ')
+    return cleaned
+
+
+def _simplify_prompt(prompt: str) -> str:
+    simple = prompt
+    for phrase in [
+        "ultra-realistic photograph,", "professional studio lighting,",
+        "shallow depth of field,", "85mm lens,", "natural skin texture,",
+        "cinematic color grading,", "8K resolution,", "photorealistic,",
+        "sharp focus,", "professional lighting,", "volumetric lighting,",
+        "rim lighting,", "soft shadows,",
+    ]:
+        simple = simple.replace(phrase, "")
+    simple = re.sub(r',\s*,', ',', simple)
+    simple = re.sub(r'\s{2,}', ' ', simple).strip().strip(',').strip()
+    if len(simple) > 250:
+        simple = simple[:247].rsplit(',', 1)[0].rstrip(', ')
+    simple += ", realistic photo, no text, no watermark"
+    return simple
+
+
+def _submit_and_poll(workflow: dict, entry_id, asset_prefix: str, is_broll: bool) -> Path | None:
     try:
         resp = requests.post(f"{COMFYUI_URL}/prompt", json={"prompt": workflow}, timeout=30)
-        resp.raise_for_status()
-        prompt_id = resp.json()["prompt_id"]
-        logger.info(f"ComfyUI prompt submitted: {prompt_id}")
     except Exception as e:
         logger.error(f"Failed to submit prompt to ComfyUI: {e}")
         return None
 
+    resp_json = resp.json()
+
+    if resp.status_code != 200 or "error" in resp_json:
+        error_msg = resp_json.get("error", {})
+        node_errors = resp_json.get("node_errors", {})
+        logger.error(f"ComfyUI prompt rejected for entry {entry_id}: {error_msg}")
+        if node_errors:
+            for node_id, errs in node_errors.items():
+                logger.error(f"  Node {node_id}: {errs}")
+        return None
+
+    prompt_id = resp_json.get("prompt_id")
+    if not prompt_id:
+        logger.error(f"No prompt_id in ComfyUI response for entry {entry_id}: {resp_json}")
+        return None
+
+    logger.info(f"ComfyUI prompt submitted: {prompt_id}")
+
     start = time.time()
-    max_wait = 600
+    max_wait = 300
     while time.time() - start < max_wait:
         try:
             hist_resp = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
@@ -275,14 +350,14 @@ def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset
                 if status.get("completed", False) or status.get("status_str") == "success":
                     outputs = hist_data[prompt_id].get("outputs", {})
                     logger.info(f"ComfyUI outputs keys: {list(outputs.keys())}")
-                    
+
                     image_data = None
                     for node_id, node_output in outputs.items():
                         if "images" in node_output and node_output["images"]:
                             image_data = node_output
                             image_node_id = node_id
                             break
-                    
+
                     if image_data:
                         images = image_data["images"]
                         img_info = images[0]
@@ -318,16 +393,12 @@ def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset
                         logger.info(f"Looking for ComfyUI output: {src}")
                         if src.exists():
                             img = Image.open(src)
-                            if is_broll:
-                                img = _crop_to_16_9(img, (1920, 1080))
-                            else:
-                                img = img.resize((1920, 1080), Image.LANCZOS)
+                            img = _fit_image(img, (1920, 1080))
                             img.save(dst)
                             logger.info(f"Image saved: {dst}")
                             return dst
                         else:
                             logger.error(f"ComfyUI image file not found at: {src}")
-                            logger.info(f"Listing ComfyUI output dir contents:")
                             try:
                                 for f in comfyui_output.iterdir():
                                     if f.is_file() and f.suffix in ('.png', '.jpg', '.webp'):
@@ -340,7 +411,8 @@ def _generate_single_image(workflow_template: dict, prompt: str, entry_id, asset
                         return None
 
                 if status.get("status_str") == "error":
-                    logger.error(f"ComfyUI generation error for entry {entry_id}: {status}")
+                    error_msg = status.get("message", "unknown error")
+                    logger.error(f"ComfyUI generation error for entry {entry_id}: {error_msg}")
                     return None
 
         except requests.ConnectionError:
@@ -448,7 +520,8 @@ def _create_text_card(entry: dict, asset_prefix: str = "") -> Path | None:
     card_h = max(card_h, 160)
 
     cx = (width - card_w) // 2
-    cy = (height - card_h) // 2
+    y_ratio = style.get("y_position_ratio", 0.72)
+    cy = int((height - card_h) * y_ratio)
 
     bg_rgb = _hex_to_rgba(bg_hex, 225)
     draw.rounded_rectangle(
@@ -642,6 +715,20 @@ def _crop_to_16_9(img: Image.Image, target_size: tuple) -> Image.Image:
         img = img.crop((0, top, w, top + new_h))
 
     return img.resize(target_size, Image.LANCZOS)
+
+
+def _fit_image(img: Image.Image, target_size: tuple) -> Image.Image:
+    tw, th = target_size
+    canvas = Image.new("RGB", (tw, th), (0, 0, 0))
+    w, h = img.size
+    scale = min(tw / w, th / h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+    x = (tw - new_w) // 2
+    y = (th - new_h) // 2
+    canvas.paste(img_resized, (x, y))
+    return canvas
 
 
 def _force_free_vram_for_comfyui():

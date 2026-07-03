@@ -38,7 +38,7 @@ PATHS = {
 }
 
 COMFYUI_URL = "http://127.0.0.1:8188"
-COMFYUI_WORKFLOW = PATHS["workflows"] / "ZImageBaseModelWorkFlow.json"
+COMFYUI_WORKFLOW = PATHS["workflows"] / "image_krea2_turbo_direct.json"
 COMFYUI_DIR = Path(os.environ.get("COMFYUI_DIR", BASE_DIR / "ComfyUI")).resolve()
 COMFYUI_STARTUP_TIMEOUT = 60
 COMFYUI_POLL_INTERVAL = 2
@@ -95,3 +95,37 @@ def setup_logging():
 def ensure_dirs():
     for path in PATHS.values():
         path.mkdir(parents=True, exist_ok=True)
+
+
+def clean_temp_for_video(video_stem: str):
+    """Delete all temp/generated artifacts for a video so re-runs start fresh."""
+    import shutil
+    patterns = [
+        (PATHS["temp"], f"{video_stem}_*"),
+        (PATHS["gen_images"], f"*gen_*"),
+        (PATHS["graphics"], f"*card_*"),
+        (PATHS["graphics"], f"*lower_third_*"),
+    ]
+    cleaned = 0
+    for folder, pattern in patterns:
+        if not folder.exists():
+            continue
+        for f in folder.glob(pattern):
+            try:
+                f.unlink()
+                cleaned += 1
+            except Exception:
+                pass
+    subfolder_cleanups = [
+        PATHS["temp"] / "subtitle_frames",
+    ]
+    for sub in subfolder_cleanups:
+        if sub.exists():
+            try:
+                shutil.rmtree(sub)
+                cleaned += 1
+            except Exception:
+                pass
+    if cleaned:
+        print(f"  Cleaned {cleaned} temp files for fresh run")
+    return cleaned
