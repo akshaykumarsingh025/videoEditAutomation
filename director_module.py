@@ -19,10 +19,10 @@ You receive a Hinglish transcript with timestamps. Your job is to create a JSON 
 RULES:
 1. Output ONLY valid JSON. No markdown, no explanation, no code fences.
 2. All text content must be in Hinglish (Romanized Hindi) only.
-3. Use these action types ONLY: BROLL_IMAGE, LOWER_THIRD, TEXT_CARD
+3. Use these action types: BROLL_IMAGE, LOWER_THIRD, TEXT_CARD, QUOTE_CARD, STAT_CARD, LIST_CARD, CTA_CARD, CHAPTER_TITLE
 4. Each timeline entry must have: id, time (HH:MM:SS), duration (seconds), action, data, position
 5. Optional field: fade ("in", "out", "in-out") — REQUIRED for BROLL_IMAGE (use "in-out")
-6. Optional field: fx — for BROLL_IMAGE, set fx: "ken_burns_in" (slow zoom in) or "ken_burns_out" (slow zoom out). Alternate between them.
+6. Optional field: fx — for BROLL_IMAGE, choose from: "ken_burns_in" (slow zoom in), "ken_burns_out" (slow zoom out), "slide_left", "slide_right", "slide_up", "slide_down", "whip_pan", "dip_black", "dip_white", "zoom_punch", "quick_cut". Alternate between different transitions for variety.
 
 CRITICAL COVERAGE RULE:
 - You MUST place overlays across the ENTIRE video duration, from start to finish.
@@ -62,21 +62,47 @@ NEVER USE THESE (THE MODEL CANNOT RENDER THEM):
 - "infographic", "diagram", "chart", "statistics", "3D animation", "cross-section", "anatomical illustration", "medical diagram", "virus particles", "molecular structure", "flowchart", "comparison table", "X-ray", "microscope view", "abstract representation", "screenshot", "UI", "app interface", "text overlay", "title card", "label", "close up hands", "fingers"
 
 DURATION: 5-6 seconds per BROLL_IMAGE. Keep images short and impactful. Change them frequently to keep viewer engaged.
-Position: "center". Always set fade: "in-out". Set fx: "ken_burns_in" or "ken_burns_out" (alternate between them).
+Position: "center". Always set fade: "in-out". Set fx to one of: "ken_burns_in", "ken_burns_out", "slide_left", "slide_right", "slide_up", "dip_black", "zoom_punch", "whip_pan", "quick_cut". Vary the transitions for visual interest.
 Generate AT LEAST 15-25 BROLL_IMAGE entries per video. Use one every 20-30 seconds. Cover the ENTIRE video from start to finish.
 EVERY BROLL must match what is being said at that exact timestamp. Read the transcript carefully and create prompts that VISUALLY SHOW the action being described.
 
 LOWER_THIRD: Use for speaker introductions only. Position: "bottom-left". Duration: 5-7 seconds.
 
-TEXT_CARD: These are the PRIMARY way to keep the video engaging. Use them CONSTANTLY — for EVERY important point, fact, warning, recommendation, or key phrase the doctor says.
+TEXT_CARD: Use for EVERY important point, fact, warning, recommendation, or key phrase.
 - Every time the doctor states a fact: TEXT_CARD
 - Every time the doctor gives advice: TEXT_CARD
 - Every time the doctor mentions a symptom, treatment, or medicine name: TEXT_CARD
-- Every time the doctor says something surprising or important: TEXT_CARD
-- Every time the doctor says a number (age, duration, dosage): TEXT_CARD
-Generate AT LEAST 25-40 TEXT_CARD entries per video — one every 10-15 seconds. These should be VERY frequent.
+Generate AT LEAST 25-40 TEXT_CARD entries per video — one every 10-15 seconds.
 Short punchy Hinglish statements. Position: "center". Duration: 3-4 seconds.
-Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain", "Pap Smear Zaroori Hai!", "Tension Mat Lo!", "Thanda Paani Piye!", "Dhoop Mein Mat Niklein!", "Exercise Zaroori Hai", "Har Roz 2L Paani".
+Examples: "Periods Ka Pain?", "HPV = Human Papillomavirus", "9-45 Saal Vaccine Le Sakti Hain"
+
+QUOTE_CARD: Use when the doctor says something especially powerful or memorable — a key quote that should stand out.
+- data format: "quote text\\nattribution" (e.g., "Health Is Wealth\\nDr. Deepika Singh")
+- Duration: 5-7 seconds. Position: "center".
+
+STAT_CARD: Use when the doctor mentions a specific number, age range, dosage, or statistic.
+- data format: "number\\nlabel" (e.g., "9-45\\nSaal Vaccine Le Sakti Hain" or "2L\\nPaani Har Roz")
+- Duration: 4-6 seconds. Position: "center".
+
+LIST_CARD: Use when the doctor lists 2-5 items (tips, symptoms, precautions).
+- data format: title on first line, then each item on a new line prefixed with "→" (e.g., "3 Cheezein Yaad Rakhein\\n→ Dhoop Mat Niklein\\n→ Thanda Paani Piye\\n→ Exercise Zaroori Hai")
+- Duration: 5-8 seconds. Position: "center".
+
+CTA_CARD: Use once at the end of the video for a call-to-action (subscribe, contact).
+- data format: "headline\\nsubtext\\nbutton text" (e.g., "Subscribe Karein!\\nHealth Tips Ke Liye\\nSubscribe Now")
+- Duration: 5-8 seconds. Position: "center".
+
+CHAPTER_TITLE: Use when the topic changes significantly — a full-screen section divider.
+- data format: "chapter title\\nchapter subtitle" (e.g., "Pregnancy Mein Exercise\\nSafe Yoga Tips")
+- Duration: 3-4 seconds. Position: "center".
+
+CHOOSING CARD TYPES:
+- Default to TEXT_CARD for simple facts and advice.
+- Use QUOTE_CARD when you want to emphasize a powerful statement.
+- Use STAT_CARD when numbers/ages/dosages are mentioned.
+- Use LIST_CARD when the doctor lists 3+ items.
+- Use CTA_CARD once near the end for the subscribe prompt.
+- Use CHAPTER_TITLE when transitioning between major topics.
 
 Do NOT place overlays during the first 3 seconds of video.
 Space overlays at least 2 seconds apart.
@@ -363,7 +389,7 @@ def _enforce_timeline_density(timeline_data: dict, duration_sec: float) -> dict:
 
     timeline = timeline_data["timeline"]
     broll_entries = [e for e in timeline if e.get("action") == "BROLL_IMAGE"]
-    text_entries = [e for e in timeline if e.get("action") == "TEXT_CARD"]
+    text_entries = [e for e in timeline if e.get("action") in ("TEXT_CARD", "QUOTE_CARD", "STAT_CARD", "LIST_CARD", "CTA_CARD", "CHAPTER_TITLE")]
     all_visual = broll_entries + text_entries
 
     if not all_visual:

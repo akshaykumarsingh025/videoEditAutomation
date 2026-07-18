@@ -137,7 +137,8 @@ def download_web_assets(timeline_entries: list, asset_prefix: str = "") -> dict:
 
 
 def generate_graphics(timeline_entries: list, asset_prefix: str = "") -> dict:
-    graphics_entries = [e for e in timeline_entries if e["action"] in ("TEXT_CARD", "LOWER_THIRD")]
+    supported_actions = ("TEXT_CARD", "LOWER_THIRD", "QUOTE_CARD", "STAT_CARD", "LIST_CARD", "CTA_CARD", "CHAPTER_TITLE")
+    graphics_entries = [e for e in timeline_entries if e["action"] in supported_actions]
     if not graphics_entries:
         logger.info("No static graphics to generate")
         return {"generated": [], "failed": []}
@@ -145,12 +146,21 @@ def generate_graphics(timeline_entries: list, asset_prefix: str = "") -> dict:
     generated = []
     failed = []
 
+    card_renderers = {
+        "TEXT_CARD": _create_text_card,
+        "LOWER_THIRD": _create_lower_third,
+        "QUOTE_CARD": _create_quote_card,
+        "STAT_CARD": _create_stat_card,
+        "LIST_CARD": _create_list_card,
+        "CTA_CARD": _create_cta_card,
+        "CHAPTER_TITLE": _create_chapter_title,
+    }
+
     for entry in graphics_entries:
         try:
-            if entry["action"] == "TEXT_CARD":
-                output_path = _create_text_card(entry, asset_prefix)
-            elif entry["action"] == "LOWER_THIRD":
-                output_path = _create_lower_third(entry, asset_prefix)
+            renderer = card_renderers.get(entry["action"])
+            if renderer:
+                output_path = renderer(entry, asset_prefix)
             else:
                 continue
 
@@ -634,6 +644,344 @@ def _create_lower_third(entry: dict, asset_prefix: str = "") -> Path | None:
     return output_path
 
 
+def _create_quote_card(entry: dict, asset_prefix: str = "") -> Path | None:
+    width, height = 1920, 1080
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    style = BRAND.get("quote_card_style", {})
+    bg_hex = style.get("bg_color", "#0D1B2A")
+    accent_hex = style.get("accent_color", "#E8734A")
+    text_hex = style.get("text_color", "#FFFFFF")
+    quote_mark_hex = style.get("quote_mark_color", "#E8734A")
+    corner_r = style.get("corner_radius", 18)
+    pad_x = style.get("padding_x", 60)
+    pad_y = style.get("padding_y", 40)
+
+    text = entry["data"]
+    lines = text.split("\n") if "\n" in text else [text]
+    quote_text = lines[0]
+    attribution = lines[1] if len(lines) > 1 else ""
+
+    font_size = int(BRAND["fonts"]["text_card_size"] * style.get("font_size_ratio", 0.7))
+    font = _load_font(BRAND["fonts"]["text_card"], font_size)
+    attr_font = _load_font(BRAND["fonts"]["lower_third"], int(font_size * 0.5))
+    quote_font = _load_font(BRAND["fonts"]["text_card"], int(font_size * 1.8))
+
+    quote_mark = "\u201C"
+    quote_mark_bbox = draw.textbbox((0, 0), quote_mark, font=quote_font)
+    quote_mark_w = quote_mark_bbox[2] - quote_mark_bbox[0]
+    quote_mark_h = quote_mark_bbox[3] - quote_mark_bbox[1]
+
+    wrapped = _wrap_text(draw, quote_text, font, int(width * 0.7))
+    line_height = draw.textbbox((0, 0), "Ay", font=font)[3] + 10
+    total_text_h = len(wrapped) * line_height
+    if attribution:
+        total_text_h += int(font_size * 0.5) + 20
+
+    card_h = total_text_h + pad_y * 2 + quote_mark_h // 2
+    card_w = width - 200
+    cx = (width - card_w) // 2
+    cy = (height - card_h) // 2
+
+    bg_rgb = _hex_to_rgba(bg_hex, 230)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=bg_rgb)
+
+    border_rgb = _hex_to_rgba(accent_hex, 180)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=None, outline=border_rgb, width=2)
+
+    accent_rgb = _hex_to_rgba(accent_hex, 255)
+    draw.rounded_rectangle([(cx, cy), (cx + 6, cy + card_h)], radius=3, fill=accent_rgb)
+
+    quote_mark_rgb = _hex_to_rgb(quote_mark_hex)
+    text_rgb = _hex_to_rgb(text_hex)
+
+    text_x = cx + pad_x + 6
+    draw.text((text_x, cy + pad_y - quote_mark_h // 3), quote_mark, fill=quote_mark_rgb, font=quote_font)
+
+    for i, line in enumerate(wrapped):
+        draw.text((text_x, cy + pad_y + quote_mark_h // 3 + i * line_height), line, fill=text_rgb, font=font)
+
+    if attribution:
+        attr_y = cy + pad_y + quote_mark_h // 3 + len(wrapped) * line_height + 20
+        attr_rgb = _hex_to_rgb(accent_hex)
+        draw.text((text_x, attr_y), f"\u2014 {attribution}", fill=attr_rgb, font=attr_font)
+
+    output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}quote_card_{_entry_token(entry['id'])}.png"
+    img.save(output_path)
+    logger.info(f"Quote card saved: {output_path}")
+    return output_path
+
+
+def _create_stat_card(entry: dict, asset_prefix: str = "") -> Path | None:
+    width, height = 1920, 1080
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    style = BRAND.get("stat_card_style", {})
+    bg_hex = style.get("bg_color", "#0D1B2A")
+    accent_hex = style.get("accent_color", "#E8734A")
+    number_hex = style.get("number_color", "#E8734A")
+    label_hex = style.get("label_color", "#CBD5E1")
+    corner_r = style.get("corner_radius", 18)
+    pad_x = style.get("padding_x", 60)
+    pad_y = style.get("padding_y", 40)
+
+    text = entry["data"]
+    lines = text.split("\n") if "\n" in text else [text]
+    stat_number = lines[0]
+    stat_label = lines[1] if len(lines) > 1 else ""
+
+    number_font = _load_font(BRAND["fonts"]["text_card"], 120)
+    label_font = _load_font(BRAND["fonts"]["text_card"], int(BRAND["fonts"]["text_card_size"] * 0.5))
+
+    num_bbox = draw.textbbox((0, 0), stat_number, font=number_font)
+    num_w = num_bbox[2] - num_bbox[0]
+    num_h = num_bbox[3] - num_bbox[1]
+
+    lbl_bbox = draw.textbbox((0, 0), stat_label, font=label_font) if stat_label else (0, 0, 0, 0)
+    lbl_w = lbl_bbox[2] - lbl_bbox[0]
+    lbl_h = lbl_bbox[3] - lbl_bbox[1] if stat_label else 0
+
+    card_w = max(num_w, lbl_w) + pad_x * 2
+    card_h = num_h + lbl_h + pad_y * 3 + 20
+    card_w = max(card_w, 400)
+
+    cx = (width - card_w) // 2
+    cy = int((height - card_h) * 0.72)
+
+    bg_rgb = _hex_to_rgba(bg_hex, 230)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=bg_rgb)
+
+    border_rgb = _hex_to_rgba(accent_hex, 180)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=None, outline=border_rgb, width=2)
+
+    accent_rgb = _hex_to_rgba(accent_hex, 255)
+    draw.rounded_rectangle([(cx, cy), (cx + 6, cy + card_h)], radius=3, fill=accent_rgb)
+
+    bottom_accent_y = cy + card_h - 5
+    draw.rounded_rectangle([(cx + 10, bottom_accent_y), (cx + card_w - 10, cy + card_h)], radius=2, fill=accent_rgb)
+
+    number_rgb = _hex_to_rgb(number_hex)
+    label_rgb = _hex_to_rgb(label_hex)
+
+    draw.text(((width - num_w) // 2, cy + pad_y), stat_number, fill=number_rgb, font=number_font)
+
+    if stat_label:
+        draw.text(((width - lbl_w) // 2, cy + pad_y + num_h + 16), stat_label, fill=label_rgb, font=label_font)
+
+    output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}stat_card_{_entry_token(entry['id'])}.png"
+    img.save(output_path)
+    logger.info(f"Stat card saved: {output_path}")
+    return output_path
+
+
+def _create_list_card(entry: dict, asset_prefix: str = "") -> Path | None:
+    width, height = 1920, 1080
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    style = BRAND.get("list_card_style", {})
+    bg_hex = style.get("bg_color", "#0D1B2A")
+    accent_hex = style.get("accent_color", "#E8734A")
+    text_hex = style.get("text_color", "#FFFFFF")
+    bullet_hex = style.get("bullet_color", "#E8734A")
+    corner_r = style.get("corner_radius", 18)
+    pad_x = style.get("padding_x", 60)
+    pad_y = style.get("padding_y", 40)
+
+    text = entry["data"]
+    items = [line.strip() for line in text.split("\n") if line.strip()]
+
+    title = ""
+    list_items = items
+    if items and not items[0].startswith(("•", "-", "*", "→")):
+        title = items[0]
+        list_items = items[1:]
+
+    item_font = _load_font(BRAND["fonts"]["text_card"], int(BRAND["fonts"]["text_card_size"] * 0.5))
+    title_font = _load_font(BRAND["fonts"]["text_card"], BRAND["fonts"]["text_card_size"])
+
+    line_height = draw.textbbox((0, 0), "Ay", font=item_font)[3] + 16
+    title_h = 0
+    if title:
+        title_bbox = draw.textbbox((0, 0), title, font=title_font)
+        title_h = title_bbox[3] - title_bbox[1] + 24
+
+    total_h = title_h + len(list_items) * line_height + pad_y * 2
+
+    max_item_w = 0
+    for item in list_items:
+        clean = item.lstrip("•-*→ ").strip()
+        bbox = draw.textbbox((0, 0), clean, font=item_font)
+        max_item_w = max(max_item_w, bbox[2] - bbox[0])
+
+    if title:
+        title_bbox = draw.textbbox((0, 0), title, font=title_font)
+        max_item_w = max(max_item_w, title_bbox[2] - title_bbox[0])
+
+    card_w = max_item_w + pad_x * 2 + 40
+    card_h = total_h
+
+    cx = (width - card_w) // 2
+    cy = int((height - card_h) * 0.72)
+
+    bg_rgb = _hex_to_rgba(bg_hex, 230)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=bg_rgb)
+
+    border_rgb = _hex_to_rgba(accent_hex, 180)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=None, outline=border_rgb, width=2)
+
+    accent_rgb = _hex_to_rgba(accent_hex, 255)
+    draw.rounded_rectangle([(cx, cy), (cx + 6, cy + card_h)], radius=3, fill=accent_rgb)
+
+    text_rgb = _hex_to_rgb(text_hex)
+    bullet_rgb = _hex_to_rgb(bullet_hex)
+
+    y = cy + pad_y
+    if title:
+        draw.text((cx + pad_x + 6, y), title, fill=text_rgb, font=title_font)
+        y += title_h
+
+    for item in list_items:
+        clean = item.lstrip("•-*→ ").strip()
+        draw.text((cx + pad_x + 6, y), "→", fill=bullet_rgb, font=item_font)
+        draw.text((cx + pad_x + 36, y), clean, fill=text_rgb, font=item_font)
+        y += line_height
+
+    output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}list_card_{_entry_token(entry['id'])}.png"
+    img.save(output_path)
+    logger.info(f"List card saved: {output_path}")
+    return output_path
+
+
+def _create_cta_card(entry: dict, asset_prefix: str = "") -> Path | None:
+    width, height = 1920, 1080
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    style = BRAND.get("cta_card_style", {})
+    bg_hex = style.get("bg_color", "#0D1B2A")
+    accent_hex = style.get("accent_color", "#E8734A")
+    text_hex = style.get("text_color", "#FFFFFF")
+    sub_hex = style.get("subtext_color", "#CBD5E1")
+    btn_hex = style.get("button_color", "#E8734A")
+    btn_text_hex = style.get("button_text_color", "#FFFFFF")
+    corner_r = style.get("corner_radius", 18)
+    pad_x = style.get("padding_x", 60)
+    pad_y = style.get("padding_y", 40)
+
+    text = entry["data"]
+    lines = text.split("\n") if "\n" in text else [text]
+    headline = lines[0]
+    sub_text = lines[1] if len(lines) > 1 else ""
+    btn_text = lines[2] if len(lines) > 2 else "Subscribe"
+
+    headline_font = _load_font(BRAND["fonts"]["text_card"], BRAND["fonts"]["text_card_size"])
+    sub_font = _load_font(BRAND["fonts"]["lower_third"], int(BRAND["fonts"]["text_card_size"] * 0.45))
+    btn_font = _load_font(BRAND["fonts"]["text_card"], int(BRAND["fonts"]["text_card_size"] * 0.5))
+
+    hl_bbox = draw.textbbox((0, 0), headline, font=headline_font)
+    hl_w = hl_bbox[2] - hl_bbox[0]
+    hl_h = hl_bbox[3] - hl_bbox[1]
+
+    sub_w = 0
+    sub_h = 0
+    if sub_text:
+        sb_bbox = draw.textbbox((0, 0), sub_text, font=sub_font)
+        sub_w = sb_bbox[2] - sb_bbox[0]
+        sub_h = sb_bbox[3] - sb_bbox[1]
+
+    btn_bbox = draw.textbbox((0, 0), btn_text, font=btn_font)
+    btn_w = btn_bbox[2] - btn_bbox[0]
+    btn_h = btn_bbox[3] - btn_bbox[1]
+
+    btn_pad_x = 40
+    btn_pad_y = 16
+    btn_box_w = btn_w + btn_pad_x * 2
+    btn_box_h = btn_h + btn_pad_y * 2
+
+    card_w = max(hl_w, sub_w, btn_box_w) + pad_x * 2
+    card_h = hl_h + (sub_h + 16 if sub_text else 0) + btn_box_h + 30 + pad_y * 2
+
+    cx = (width - card_w) // 2
+    cy = (height - card_h) // 2
+
+    bg_rgb = _hex_to_rgba(bg_hex, 230)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=bg_rgb)
+
+    border_rgb = _hex_to_rgba(accent_hex, 180)
+    draw.rounded_rectangle([(cx, cy), (cx + card_w, cy + card_h)], radius=corner_r, fill=None, outline=border_rgb, width=2)
+
+    text_rgb = _hex_to_rgb(text_hex)
+    sub_rgb = _hex_to_rgb(sub_hex)
+    btn_text_rgb = _hex_to_rgb(btn_text_hex)
+    btn_rgb = _hex_to_rgb(btn_hex)
+
+    y = cy + pad_y
+    draw.text(((width - hl_w) // 2, y), headline, fill=text_rgb, font=headline_font)
+    y += hl_h + 16
+
+    if sub_text:
+        draw.text(((width - sub_w) // 2, y), sub_text, fill=sub_rgb, font=sub_font)
+        y += sub_h + 16
+
+    y += 14
+    btn_x = (width - btn_box_w) // 2
+    draw.rounded_rectangle([(btn_x, y), (btn_x + btn_box_w, y + btn_box_h)], radius=12, fill=btn_rgb)
+    draw.text(((width - btn_w) // 2, y + btn_pad_y), btn_text, fill=btn_text_rgb, font=btn_font)
+
+    output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}cta_card_{_entry_token(entry['id'])}.png"
+    img.save(output_path)
+    logger.info(f"CTA card saved: {output_path}")
+    return output_path
+
+
+def _create_chapter_title(entry: dict, asset_prefix: str = "") -> Path | None:
+    width, height = 1920, 1080
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    style = BRAND.get("chapter_title_style", {})
+    bg_hex = style.get("bg_color", "#0D1B2A")
+    accent_hex = style.get("accent_color", "#E8734A")
+    text_hex = style.get("text_color", "#FFFFFF")
+    sub_hex = style.get("subtext_color", "#CBD5E1")
+    pad_x = style.get("padding_x", 80)
+    pad_y = style.get("padding_y", 60)
+
+    text = entry["data"]
+    lines = text.split("\n") if "\n" in text else [text]
+    chapter_title = lines[0]
+    chapter_sub = lines[1] if len(lines) > 1 else ""
+
+    title_font = _load_font(BRAND["fonts"]["text_card"], int(BRAND["fonts"]["text_card_size"] * 1.2))
+    sub_font = _load_font(BRAND["fonts"]["lower_third"], int(BRAND["fonts"]["text_card_size"] * 0.45))
+
+    draw.rounded_rectangle([(0, 0), (width, height)], radius=0, fill=_hex_to_rgba(bg_hex, 240))
+
+    accent_rgb = _hex_to_rgba(accent_hex, 255)
+    line_y = height // 2 - 40
+    draw.rectangle([(pad_x, line_y), (width - pad_x, line_y + 3)], fill=accent_rgb)
+
+    title_rgb = _hex_to_rgb(text_hex)
+    sub_rgb = _hex_to_rgb(sub_hex)
+
+    t_bbox = draw.textbbox((0, 0), chapter_title, font=title_font)
+    t_w = t_bbox[2] - t_bbox[0]
+    draw.text(((width - t_w) // 2, line_y - t_bbox[3] - 24), chapter_title, fill=title_rgb, font=title_font)
+
+    if chapter_sub:
+        s_bbox = draw.textbbox((0, 0), chapter_sub, font=sub_font)
+        s_w = s_bbox[2] - s_bbox[0]
+        draw.text(((width - s_w) // 2, line_y + 24), chapter_sub, fill=sub_rgb, font=sub_font)
+
+    output_path = PATHS["graphics"] / f"{_asset_prefix(asset_prefix)}chapter_title_{_entry_token(entry['id'])}.png"
+    img.save(output_path)
+    logger.info(f"Chapter title saved: {output_path}")
+    return output_path
+
+
 def _load_font(font_name: str, size: int) -> ImageFont.FreeTypeFont:
     font_path = PATHS["fonts"] / font_name
     if font_path.exists():
@@ -681,6 +1029,23 @@ def _hex_to_rgb(hex_color: str) -> tuple:
 
 def _hex_to_rgba(hex_color: str, alpha: int) -> tuple:
     return _hex_to_rgb(hex_color) + (alpha,)
+
+
+def _wrap_text(draw, text, font, max_width):
+    words = text.split()
+    lines = []
+    current_line = ""
+    for word in words:
+        test = f"{current_line} {word}".strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if bbox[2] - bbox[0] > max_width and current_line:
+            lines.append(current_line)
+            current_line = word
+        else:
+            current_line = test
+    if current_line:
+        lines.append(current_line)
+    return lines
 
 
 def _asset_prefix(asset_prefix: str) -> str:

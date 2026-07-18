@@ -4,8 +4,6 @@ import glob
 import subprocess
 from pathlib import Path
 
-os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-
 BASE_DIR = Path(__file__).parent.resolve()
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"

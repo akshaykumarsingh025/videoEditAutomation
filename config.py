@@ -35,6 +35,7 @@ PATHS = {
     "graphics": BASE_DIR / "assets" / "graphics",
     "fonts": BASE_DIR / "assets" / "fonts",
     "music": BASE_DIR / "assets" / "music",
+    "sfx": BASE_DIR / "assets" / "sfx",
 }
 
 COMFYUI_URL = "http://127.0.0.1:8188"
@@ -51,6 +52,8 @@ WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "medium")
 WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", None)
 
 SILENCE_THRESHOLD_MS = int(os.environ.get("SILENCE_THRESHOLD_MS", "0"))
+SILENCE_MIN_GAP_MS = int(os.environ.get("SILENCE_MIN_GAP_MS", "700"))
+SILENCE_KEEP_PADDING_MS = int(os.environ.get("SILENCE_KEEP_PADDING_MS", "150"))
 
 RETRY_ATTEMPTS = 3
 RETRY_BASE_DELAY = 1
@@ -63,7 +66,10 @@ EXPORT_PROFILES = {
 
 DRAFT_RESOLUTION = (854, 480)
 
-VALID_ACTIONS = {"BROLL_IMAGE", "COMFYUI_PROMPT", "WEB_GIF", "LOWER_THIRD", "TEXT_CARD", "WATERMARK"}
+VALID_ACTIONS = {
+    "BROLL_IMAGE", "COMFYUI_PROMPT", "WEB_GIF", "LOWER_THIRD", "TEXT_CARD",
+    "WATERMARK", "QUOTE_CARD", "STAT_CARD", "LIST_CARD", "CTA_CARD", "CHAPTER_TITLE",
+}
 
 REQUIRED_TIMELINE_FIELDS = {"id", "time", "duration", "action", "data", "position"}
 

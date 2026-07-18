@@ -22,10 +22,13 @@ fonts:
   lower_third_size: 36
 
 subtitle_style:
+  enabled: true
   bg_color: "rgba(0,0,0,0.7)"
   text_color: "#FFFFFF"
   highlight_color: "#E8734A"
   y_position_ratio: 0.84
+  words_per_chunk: 5
+  chunk_overlap_words: 1
 
 info_card:
   enabled: true
@@ -94,6 +97,86 @@ broll_fx:
   zoom_end: 1.15
   zoom_duration: "full"
 
+transitions:
+  enabled: true
+  default: "fade"
+  available:
+    - "fade"
+    - "slide_left"
+    - "slide_right"
+    - "slide_up"
+    - "slide_down"
+    - "whip_pan"
+    - "dip_black"
+    - "dip_white"
+    - "zoom_punch"
+    - "quick_cut"
+
+quote_card_style:
+  bg_color: "#0D1B2A"
+  accent_color: "#E8734A"
+  text_color: "#FFFFFF"
+  quote_mark_color: "#E8734A"
+  corner_radius: 18
+  padding_x: 60
+  padding_y: 40
+  font_size_ratio: 0.7
+
+stat_card_style:
+  bg_color: "#0D1B2A"
+  accent_color: "#E8734A"
+  number_color: "#E8734A"
+  label_color: "#CBD5E1"
+  corner_radius: 18
+  padding_x: 60
+  padding_y: 40
+
+list_card_style:
+  bg_color: "#0D1B2A"
+  accent_color: "#E8734A"
+  text_color: "#FFFFFF"
+  bullet_color: "#E8734A"
+  corner_radius: 18
+  padding_x: 60
+  padding_y: 40
+  bullet_reveal: true
+
+cta_card_style:
+  bg_color: "#0D1B2A"
+  accent_color: "#E8734A"
+  text_color: "#FFFFFF"
+  subtext_color: "#CBD5E1"
+  button_color: "#E8734A"
+  button_text_color: "#FFFFFF"
+  corner_radius: 18
+  padding_x: 60
+  padding_y: 40
+
+chapter_title_style:
+  bg_color: "#0D1B2A"
+  accent_color: "#E8734A"
+  text_color: "#FFFFFF"
+  subtext_color: "#CBD5E1"
+  corner_radius: 0
+  padding_x: 80
+  padding_y: 60
+
+intro:
+  enabled: true
+  duration: 3
+  blur_radius: 20
+  bg_color: "#0D1B2A"
+  text_color: "#FFFFFF"
+  accent_color: "#E8734A"
+
+outro:
+  enabled: true
+  duration: 8
+  bg_color: "#0D1B2A"
+  text_color: "#FFFFFF"
+  accent_color: "#E8734A"
+  subtext_color: "#CBD5E1"
+
 image_generation:
   style: "ultra-realistic photograph"
   positive_suffix: "ultra-realistic photograph, professional studio lighting, shallow depth of field, 85mm lens, natural skin texture, cinematic color grading, 8K resolution, photorealistic, sharp focus, no text, no words, no letters"
@@ -106,6 +189,23 @@ music:
   volume_under_speech: -30
   volume_normal: -20
   fade_out_seconds: 3
+
+sfx:
+  enabled: true
+  broll_in: "whoosh.mp3"
+  text_card_in: "pop.mp3"
+  hero_riser: "riser.mp3"
+  volume_db: -12
+
+ducking:
+  enabled: true
+  attack_ms: 100
+  release_ms: 300
+
+silence:
+  enabled: false
+  min_gap_ms: 700
+  keep_padding_ms: 150
 
 export:
   youtube_lufs: -14

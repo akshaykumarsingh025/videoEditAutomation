@@ -10,6 +10,8 @@ from config import (
     WHISPER_MODEL,
     WHISPER_LANGUAGE,
     SILENCE_THRESHOLD_MS,
+    SILENCE_MIN_GAP_MS,
+    SILENCE_KEEP_PADDING_MS,
 )
 
 logger = logging.getLogger("pipeline.audio")
@@ -118,6 +120,13 @@ def detect_silence(words_path: str | Path, video_duration: float) -> dict:
 
     silence_cuts = []
     silence_threshold = SILENCE_THRESHOLD_MS / 1000.0
+    min_gap = SILENCE_MIN_GAP_MS / 1000.0
+    keep_padding = SILENCE_KEEP_PADDING_MS / 1000.0
+
+    if silence_threshold <= 0:
+        silence_threshold = 1.5
+
+    effective_threshold = max(silence_threshold, min_gap)
 
     if not words_data:
         logger.warning("No word data available for silence detection")
@@ -126,30 +135,35 @@ def detect_silence(words_path: str | Path, video_duration: float) -> dict:
     prev_end = 0.0
     for word in words_data:
         gap = word["start"] - prev_end
-        if gap >= silence_threshold:
-            silence_cuts.append({
-                "start": _format_timestamp(prev_end),
-                "end": _format_timestamp(word["start"]),
-                "duration_ms": int(gap * 1000),
-                "start_sec": round(prev_end, 3),
-                "end_sec": round(word["start"], 3),
-            })
+        if gap >= effective_threshold:
+            cut_start = prev_end + keep_padding
+            cut_end = word["start"] - keep_padding
+            if cut_end > cut_start:
+                silence_cuts.append({
+                    "start": _format_timestamp(cut_start),
+                    "end": _format_timestamp(cut_end),
+                    "duration_ms": int((cut_end - cut_start) * 1000),
+                    "start_sec": round(cut_start, 3),
+                    "end_sec": round(cut_end, 3),
+                })
         prev_end = max(prev_end, word["end"])
 
     gap = video_duration - prev_end
-    if gap >= silence_threshold:
-        silence_cuts.append({
-            "start": _format_timestamp(prev_end),
-            "end": _format_timestamp(video_duration),
-            "duration_ms": int(gap * 1000),
-            "start_sec": round(prev_end, 3),
-            "end_sec": round(video_duration, 3),
-        })
+    if gap >= effective_threshold:
+        cut_start = prev_end + keep_padding
+        if cut_start < video_duration:
+            silence_cuts.append({
+                "start": _format_timestamp(cut_start),
+                "end": _format_timestamp(video_duration),
+                "duration_ms": int((video_duration - cut_start) * 1000),
+                "start_sec": round(cut_start, 3),
+                "end_sec": round(video_duration, 3),
+            })
 
     base_name = words_path.stem.replace("_words", "")
     cuts_path = PATHS["temp"] / f"{base_name}_silence_cuts.json"
     cuts_path.write_text(json.dumps(silence_cuts, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info(f"Silence cuts saved: {cuts_path} ({len(silence_cuts)} cuts found)")
+    logger.info(f"Silence cuts saved: {cuts_path} ({len(silence_cuts)} cuts found, threshold={effective_threshold:.1f}s, padding={keep_padding:.1f}s)")
 
     return {"silence_cuts_path": cuts_path, "silence_cuts": silence_cuts}
 

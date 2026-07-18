@@ -15,14 +15,6 @@ except ImportError:
     HAS_CV2 = False
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
-os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-
-try:
-    import moviepy.config
-    moviepy.config.IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-    moviepy.config_defaults.IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-except Exception:
-    pass
 
 from moviepy.editor import (
     VideoFileClip,
@@ -30,7 +22,6 @@ from moviepy.editor import (
     ColorClip,
     CompositeVideoClip,
     ImageClip,
-    TextClip,
     concatenate_videoclips,
 )
 from moviepy.video.fx.all import colorx, crop, loop as video_loop, resize
@@ -73,11 +64,26 @@ def composite_video(
     clips.extend(_create_watermark_clip(video, timeline_data, draft))
     clips.extend(_create_info_card_clip(video, draft))
 
+    sub_clips = _create_subtitle_clips(video, srt_path, draft, asset_prefix)
+    if sub_clips:
+        clips.extend(sub_clips)
+
+    progress_clips = _create_progress_bar(video, timeline_data, draft)
+    if progress_clips:
+        clips.extend(progress_clips)
+
     logger.info("Compositing all layers...")
     final = CompositeVideoClip(clips, size=(target_w, target_h))
     final = final.set_duration(video.duration)
 
+    final = _add_sfx(final, timeline_data, input_video, draft)
     final = _add_music(final, input_video, draft)
+    final = _apply_ducking(final, srt_path, draft)
+
+    intro_cfg = BRAND.get("intro", {})
+    outro_cfg = BRAND.get("outro", {})
+    if intro_cfg.get("enabled", False) or outro_cfg.get("enabled", False):
+        final = _wrap_intro_outro(final, timeline_data, draft)
 
     output_name = f"{input_video.stem}_{profile}"
     if draft:
@@ -192,6 +198,10 @@ def _apply_silence_cuts(video, silence_cuts):
 
 
 def _create_subtitle_clips(video, srt_path, draft, asset_prefix=""):
+    sub_cfg = BRAND.get("subtitle_style", {})
+    if not sub_cfg.get("enabled", True):
+        return []
+
     if not srt_path or not Path(srt_path).exists():
         logger.warning(f"SRT file not found: {srt_path}")
         return []
@@ -329,69 +339,127 @@ def _render_subtitle_image(text, video_w, video_h, font_size, font_path, text_co
 
 def _create_karaoke_subtitles_pillow(video, words_data, srt_blocks, font_size, font_path, text_color, highlight_color, y_pos_ratio):
     clips = []
-    words_per_segment = _map_words_to_srt(words_data, srt_blocks)
     sub_cache_dir = PATHS["temp"] / "subtitle_frames"
     sub_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    clip_idx = 0
-    for seg_idx, block in enumerate(srt_blocks):
-        lines = block.strip().split("\n")
-        if len(lines) < 3:
+    chunk_size = BRAND.get("subtitle_style", {}).get("words_per_chunk", 5)
+    text_rgb = _hex_to_rgb(text_color)
+    highlight_rgb = _hex_to_rgb(highlight_color)
+    font = _load_font_safe(font_path, font_size) if font_path else _load_font_safe(Path("arial.ttf"), font_size)
+
+    word_idx = 0
+    frame_idx = 0
+
+    while word_idx < len(words_data):
+        chunk = words_data[word_idx:word_idx + chunk_size]
+        if not chunk:
+            break
+
+        chunk_start = chunk[0]["start"]
+        chunk_end = chunk[-1]["end"]
+        chunk_duration = max(chunk_end - chunk_start, 0.3)
+
+        chunk_text = " ".join(w["word"].strip() for w in chunk)
+        if not chunk_text:
+            word_idx += chunk_size
             continue
 
-        try:
-            parts = lines[1].split(" --> ")
-            start = _srt_to_sec(parts[0].strip())
-            end = _srt_to_sec(parts[1].strip())
-        except (IndexError, ValueError):
-            continue
+        for wi, word in enumerate(chunk):
+            w_start = word["start"]
+            w_end = word["end"]
+            w_duration = max(w_end - w_start, 0.15)
 
-        duration = end - start
-        if duration <= 0:
-            continue
-
-        text = " ".join(lines[2:]).strip()
-        if not text:
-            continue
-
-        seg_words = words_per_segment.get(seg_idx, [])
-
-        if seg_words:
-            chunk_size = 8
-            for i in range(0, len(seg_words), chunk_size):
-                chunk = seg_words[i:i + chunk_size]
-                chunk_start = chunk[0]["start"]
-                chunk_end = chunk[-1]["end"]
-                chunk_text = " ".join(w["word"].strip() for w in chunk)
-                if not chunk_text:
-                    continue
-                chunk_duration = max(chunk_end - chunk_start, 0.3)
-
-                try:
-                    img = _render_subtitle_image(chunk_text, video.w, video.h, font_size, font_path, text_color, y_pos_ratio)
-                    if img is None:
-                        continue
-                    img_path = sub_cache_dir / f"sub_{clip_idx:05d}.png"
-                    img.save(str(img_path))
-                    clip = ImageClip(str(img_path)).set_start(chunk_start).set_duration(chunk_duration)
-                    clips.append(clip)
-                    clip_idx += 1
-                except Exception as e:
-                    logger.warning(f"Failed to create karaoke subtitle: {e}")
-        else:
             try:
-                img = _render_subtitle_image(text, video.w, video.h, font_size, font_path, text_color, y_pos_ratio)
+                img = _render_karaoke_frame(
+                    chunk, wi, video.w, video.h, font, font_size,
+                    text_rgb, highlight_rgb, y_pos_ratio
+                )
                 if img is None:
                     continue
-                img_path = sub_cache_dir / f"sub_{clip_idx:05d}.png"
+
+                img_path = sub_cache_dir / f"karaoke_{frame_idx:05d}.png"
                 img.save(str(img_path))
-                clip = ImageClip(str(img_path)).set_start(start).set_duration(duration)
+                clip = (ImageClip(str(img_path))
+                        .set_start(w_start)
+                        .set_duration(w_duration))
                 clips.append(clip)
-                clip_idx += 1
+                frame_idx += 1
             except Exception as e:
-                logger.warning(f"Failed to create subtitle: {e}")
+                logger.warning(f"Failed to create karaoke frame: {e}")
+
+        word_idx += chunk_size
 
     return clips
+
+
+def _render_karaoke_frame(chunk_words, highlight_idx, video_w, video_h, font, font_size, text_rgb, highlight_rgb, y_pos_ratio):
+    canvas = Image.new("RGBA", (video_w, video_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    max_text_w = int(video_w * 0.88)
+    padding_x = 28
+    padding_y = 14
+
+    word_metrics = []
+    space_w = draw.textbbox((0, 0), " ", font=font)[2]
+    current_line_words = []
+    current_line_w = 0
+    lines = []
+
+    for i, w in enumerate(chunk_words):
+        bbox = draw.textbbox((0, 0), w["word"].strip(), font=font)
+        w_w = bbox[2] - bbox[0]
+        w_h = bbox[3] - bbox[1]
+
+        if current_line_w + w_w > max_text_w and current_line_words:
+            lines.append(current_line_words)
+            current_line_words = []
+            current_line_w = 0
+
+        word_metrics.append({
+            "text": w["word"].strip(),
+            "width": w_w,
+            "height": w_h,
+            "idx": i,
+        })
+        current_line_words.append(word_metrics[-1])
+        current_line_w += w_w + space_w
+
+    if current_line_words:
+        lines.append(current_line_words)
+
+    line_height = draw.textbbox((0, 0), "Ay", font=font)[3] + 8
+    total_h = len(lines) * line_height + padding_y * 2
+    max_line_w = 0
+    for line in lines:
+        lw = sum(m["width"] for m in line) + space_w * (len(line) - 1)
+        max_line_w = max(max_line_w, lw)
+
+    block_w = max_line_w + padding_x * 2
+    y_start = int(video_h * y_pos_ratio) - total_h // 2
+    x_start = (video_w - block_w) // 2
+
+    draw.rounded_rectangle(
+        [(x_start, y_start), (x_start + block_w, y_start + total_h)],
+        radius=10,
+        fill=(0, 0, 0, 170),
+    )
+
+    for li, line in enumerate(lines):
+        line_w = sum(m["width"] for m in line) + space_w * (len(line) - 1)
+        lx = (video_w - line_w) // 2
+        ly = y_start + padding_y + li * line_height
+
+        for m in line:
+            is_active = m["idx"] == highlight_idx
+            color = highlight_rgb + (255,) if is_active else text_rgb + (255,)
+            shadow_color = (0, 0, 0, 180)
+
+            draw.text((lx + 2, ly + 2), m["text"], fill=shadow_color, font=font)
+            draw.text((lx, ly), m["text"], fill=color, font=font)
+            lx += m["width"] + space_w
+
+    return canvas
 
 
 def _map_words_to_srt(words_data, srt_blocks):
@@ -500,7 +568,23 @@ def _create_timeline_clips(video, timeline_data, draft, asset_prefix=""):
                 clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
                 clip = clip.resize((video.w, video.h))
                 clip = clip.set_position(("center", "center"))
-                clip = _apply_fade(clip, fade or "in-out", duration)
+
+                if fx and "ken_burns" in fx:
+                    clip = _apply_ken_burns(clip, fx, duration)
+                elif fx and fx != "ken_burns_in" and fx != "ken_burns_out":
+                    clip = _apply_transition(clip, video, fx, duration)
+                else:
+                    broll_fx = BRAND.get("broll_fx", {})
+                    if broll_fx.get("ken_burns", True):
+                        default_fx = "ken_burns_in" if int(entry.get("id", 0)) % 2 == 0 else "ken_burns_out"
+                        clip = _apply_ken_burns(clip, default_fx, duration)
+                    else:
+                        clip = _apply_fade(clip, fade or "in-out", duration)
+
+                if not (fx and "ken_burns" in fx) and not (fx and fx not in ("ken_burns_in", "ken_burns_out", "")):
+                    pass
+                elif fade:
+                    clip = _apply_fade(clip, fade, duration)
 
             elif entry["action"] == "COMFYUI_PROMPT":
                 img_path = _find_asset(PATHS["gen_images"], asset_prefix, "gen", entry["id"], [".png"])
@@ -546,6 +630,61 @@ def _create_timeline_clips(video, timeline_data, draft, asset_prefix=""):
                 clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
                 clip = clip.resize(width=int(video.w * 0.5))
                 clip = _apply_position(clip, video, "bottom-left")
+
+            elif entry["action"] == "QUOTE_CARD":
+                img_path = _find_asset(PATHS["graphics"], asset_prefix, "quote_card", entry["id"], [".png"])
+                if not img_path.exists():
+                    if not draft:
+                        logger.warning(f"Quote card not found: {img_path}")
+                    continue
+
+                clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
+                clip = clip.resize((video.w, video.h))
+                clip = _animate_text_card(clip, video, duration)
+
+            elif entry["action"] == "STAT_CARD":
+                img_path = _find_asset(PATHS["graphics"], asset_prefix, "stat_card", entry["id"], [".png"])
+                if not img_path.exists():
+                    if not draft:
+                        logger.warning(f"Stat card not found: {img_path}")
+                    continue
+
+                clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
+                clip = clip.resize((video.w, video.h))
+                clip = _animate_text_card(clip, video, duration)
+
+            elif entry["action"] == "LIST_CARD":
+                img_path = _find_asset(PATHS["graphics"], asset_prefix, "list_card", entry["id"], [".png"])
+                if not img_path.exists():
+                    if not draft:
+                        logger.warning(f"List card not found: {img_path}")
+                    continue
+
+                clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
+                clip = clip.resize((video.w, video.h))
+                clip = _animate_text_card(clip, video, duration)
+
+            elif entry["action"] == "CTA_CARD":
+                img_path = _find_asset(PATHS["graphics"], asset_prefix, "cta_card", entry["id"], [".png"])
+                if not img_path.exists():
+                    if not draft:
+                        logger.warning(f"CTA card not found: {img_path}")
+                    continue
+
+                clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
+                clip = clip.resize((video.w, video.h))
+                clip = _animate_text_card(clip, video, duration)
+
+            elif entry["action"] == "CHAPTER_TITLE":
+                img_path = _find_asset(PATHS["graphics"], asset_prefix, "chapter_title", entry["id"], [".png"])
+                if not img_path.exists():
+                    if not draft:
+                        logger.warning(f"Chapter title not found: {img_path}")
+                    continue
+
+                clip = ImageClip(str(img_path)).set_duration(duration).set_start(start)
+                clip = clip.resize((video.w, video.h))
+                clip = _animate_text_card(clip, video, duration)
 
             else:
                 continue
@@ -908,6 +1047,148 @@ def _apply_ken_burns(clip, fx_type, duration):
     return clip
 
 
+def _apply_transition(clip, video, fx_type, duration):
+    trans_cfg = BRAND.get("transitions", {})
+    if not trans_cfg.get("enabled", True):
+        return _apply_fade(clip, "in-out", duration)
+
+    anim_dur = min(0.5, duration / 4)
+
+    try:
+        if fx_type == "slide_left":
+            return _trans_slide(clip, video, duration, anim_dur, "left")
+        elif fx_type == "slide_right":
+            return _trans_slide(clip, video, duration, anim_dur, "right")
+        elif fx_type == "slide_up":
+            return _trans_slide(clip, video, duration, anim_dur, "up")
+        elif fx_type == "slide_down":
+            return _trans_slide(clip, video, duration, anim_dur, "down")
+        elif fx_type == "whip_pan":
+            return _trans_whip_pan(clip, video, duration, anim_dur)
+        elif fx_type == "dip_black":
+            return _trans_dip_color(clip, duration, anim_dur, (0, 0, 0))
+        elif fx_type == "dip_white":
+            return _trans_dip_color(clip, duration, anim_dur, (255, 255, 255))
+        elif fx_type == "zoom_punch":
+            return _trans_zoom_punch(clip, video, duration, anim_dur)
+        elif fx_type == "quick_cut":
+            return _apply_fade(clip, "in-out", duration)
+        else:
+            return _apply_fade(clip, "in-out", duration)
+    except Exception as e:
+        logger.warning(f"Transition '{fx_type}' failed: {e}, using fade")
+        return _apply_fade(clip, "in-out", duration)
+
+
+def _trans_slide(clip, video, duration, anim_dur, direction):
+    slide_distance = video.w if direction in ("left", "right") else video.h
+
+    def position_func(t):
+        if t < anim_dur:
+            progress = _ease_out_cubic(t / anim_dur)
+            offset = slide_distance * (1.0 - progress)
+        elif t > duration - anim_dur:
+            progress = _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+            offset = -slide_distance * progress
+        else:
+            return ("center", "center")
+
+        if direction == "left":
+            return (-offset, "center")
+        elif direction == "right":
+            return (offset, "center")
+        elif direction == "up":
+            return ("center", -offset)
+        else:
+            return ("center", offset)
+
+    def opacity_func(t):
+        if t < anim_dur:
+            return _ease_out_cubic(t / anim_dur)
+        elif t > duration - anim_dur:
+            return 1.0 - _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+        return 1.0
+
+    clip = clip.set_position(position_func)
+    return _apply_opacity_curve(clip, opacity_func)
+
+
+def _trans_whip_pan(clip, video, duration, anim_dur):
+    blur_frames = 4
+    pan_distance = video.w * 0.05
+
+    def position_func(t):
+        if t < anim_dur:
+            progress = _ease_out_cubic(t / anim_dur)
+            wobble = math.sin(progress * math.pi * blur_frames) * pan_distance * (1 - progress)
+            return (wobble, "center")
+        elif t > duration - anim_dur:
+            progress = _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+            wobble = math.sin(progress * math.pi * blur_frames) * pan_distance * progress
+            return (-wobble, "center")
+        return ("center", "center")
+
+    def opacity_func(t):
+        if t < anim_dur * 0.3:
+            return _ease_out_cubic(t / (anim_dur * 0.3))
+        elif t > duration - anim_dur * 0.3:
+            return 1.0 - _ease_in_cubic((t - (duration - anim_dur * 0.3)) / (anim_dur * 0.3))
+        return 1.0
+
+    clip = clip.set_position(position_func)
+    return _apply_opacity_curve(clip, opacity_func)
+
+
+def _trans_dip_color(clip, duration, anim_dur, color):
+    dip_dur = anim_dur * 1.5
+
+    def opacity_func(t):
+        if t < dip_dur:
+            progress = t / dip_dur
+            if progress < 0.5:
+                return 1.0 - _ease_in_cubic(progress * 2)
+            else:
+                return _ease_out_cubic((progress - 0.5) * 2)
+        elif t > duration - dip_dur:
+            progress = (t - (duration - dip_dur)) / dip_dur
+            if progress < 0.5:
+                return 1.0 - _ease_in_cubic(progress * 2)
+            else:
+                return _ease_out_cubic((progress - 0.5) * 2)
+        return 1.0
+
+    return _apply_opacity_curve(clip, opacity_func)
+
+
+def _trans_zoom_punch(clip, video, duration, anim_dur):
+    punch_dur = anim_dur * 1.2
+
+    def scale_func(t):
+        if t < punch_dur:
+            progress = t / punch_dur
+            if progress < 0.3:
+                s = 0.5 + 0.6 * _ease_out_cubic(progress / 0.3)
+            else:
+                s = 1.1 - 0.1 * _ease_in_out_cubic((progress - 0.3) / 0.7)
+            return s
+        elif t > duration - anim_dur:
+            progress = _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+            return 1.0 - 0.2 * progress
+        return 1.0
+
+    def opacity_func(t):
+        if t < anim_dur:
+            return _ease_out_cubic(t / anim_dur)
+        elif t > duration - anim_dur:
+            return 1.0 - _ease_in_cubic((t - (duration - anim_dur)) / anim_dur)
+        return 1.0
+
+    clip = _apply_opacity_curve(clip, opacity_func)
+    clip = clip.resize(scale_func)
+    clip = clip.set_position(("center", "center"))
+    return clip
+
+
 def _apply_face_zoom(clip, video, duration):
     """Slow subtle zoom toward the upper-center of frame (face area).
 
@@ -1172,6 +1453,163 @@ def _add_music(final_clip, input_video, draft):
     return final_clip
 
 
+def _add_sfx(final_clip, timeline_data, input_video, draft):
+    sfx_cfg = BRAND.get("sfx", {})
+    if not sfx_cfg.get("enabled", False):
+        return final_clip
+
+    if not timeline_data or "timeline" not in timeline_data:
+        return final_clip
+
+    sfx_dir = PATHS.get("sfx")
+    if not sfx_dir or not sfx_dir.exists():
+        logger.info("SFX directory not found, skipping SFX")
+        return final_clip
+
+    sfx_clips = []
+    sfx_volume = 10 ** (sfx_cfg.get("volume_db", -12) / 20)
+
+    sfx_map = {
+        "BROLL_IMAGE": sfx_cfg.get("broll_in", "whoosh.mp3"),
+        "TEXT_CARD": sfx_cfg.get("text_card_in", "pop.mp3"),
+        "QUOTE_CARD": sfx_cfg.get("text_card_in", "pop.mp3"),
+        "STAT_CARD": sfx_cfg.get("text_card_in", "pop.mp3"),
+        "LIST_CARD": sfx_cfg.get("text_card_in", "pop.mp3"),
+        "CTA_CARD": sfx_cfg.get("text_card_in", "pop.mp3"),
+        "CHAPTER_TITLE": sfx_cfg.get("text_card_in", "pop.mp3"),
+    }
+
+    for entry in timeline_data["timeline"]:
+        action = entry.get("action", "")
+        sfx_file = sfx_map.get(action)
+        if not sfx_file:
+            continue
+
+        sfx_path = sfx_dir / sfx_file
+        if not sfx_path.exists():
+            continue
+
+        try:
+            sfx_audio = AudioFileClip(str(sfx_path))
+            start = _time_to_sec(entry["time"])
+            sfx_audio = sfx_audio.set_start(start).volumex(sfx_volume)
+            sfx_clips.append(sfx_audio)
+        except Exception as e:
+            logger.warning(f"Failed to add SFX for {action} at {entry['time']}: {e}")
+
+    hero_sfx = sfx_cfg.get("hero_riser", "riser.mp3")
+    hero_moments = timeline_data.get("hero_moments", [])
+    hero_sfx_path = sfx_dir / hero_sfx
+    if hero_sfx_path.exists() and hero_moments:
+        for moment in hero_moments:
+            try:
+                riser = AudioFileClip(str(hero_sfx_path))
+                start = _time_to_sec(moment.get("time", "00:00:00"))
+                riser = riser.set_start(start).volumex(sfx_volume)
+                sfx_clips.append(riser)
+            except Exception as e:
+                logger.warning(f"Failed to add hero riser SFX: {e}")
+
+    if sfx_clips and final_clip.audio:
+        try:
+            from moviepy.editor import CompositeAudioClip
+            all_audio = [final_clip.audio] + sfx_clips
+            final_clip = final_clip.set_audio(CompositeAudioClip(all_audio))
+            logger.info(f"Added {len(sfx_clips)} SFX clips to audio mix")
+        except Exception as e:
+            logger.warning(f"Failed to composite SFX audio: {e}")
+
+    return final_clip
+
+
+def _apply_ducking(final_clip, srt_path, draft):
+    ducking_cfg = BRAND.get("ducking", {})
+    if not ducking_cfg.get("enabled", False):
+        return final_clip
+
+    words_path = None
+    if srt_path:
+        words_path = PATHS["temp"] / f"{Path(srt_path).stem.replace('_trimmed', '')}_words.json"
+
+    if not words_path or not words_path.exists():
+        logger.info("Ducking: no word-level data, skipping")
+        return final_clip
+
+    try:
+        words_data = json.loads(words_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Ducking: failed to load words data: {e}")
+        return final_clip
+
+    if not words_data:
+        return final_clip
+
+    vol_normal = 10 ** (BRAND["music"]["volume_normal"] / 20)
+    vol_ducked = 10 ** (BRAND["music"].get("volume_under_speech", -30) / 20)
+
+    speech_intervals = []
+    for w in words_data:
+        speech_intervals.append((w["start"], w["end"]))
+
+    merged = []
+    for start, end in speech_intervals:
+        if merged and start - merged[-1][1] < 0.3:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+
+    attack = ducking_cfg.get("attack_ms", 100) / 1000.0
+    release = ducking_cfg.get("release_ms", 300) / 1000.0
+
+    def volume_func(t):
+        is_speech = False
+        for s, e in merged:
+            if s - attack <= t <= e + release:
+                is_speech = True
+                break
+        if is_speech:
+            progress = 0.0
+            for s, e in merged:
+                if s - attack <= t <= s:
+                    progress = max(progress, (t - (s - attack)) / attack)
+                elif s <= t <= e:
+                    progress = 1.0
+                elif e <= t <= e + release:
+                    progress = max(progress, 1.0 - (t - e) / release)
+            return vol_ducked + (vol_normal - vol_ducked) * (1.0 - progress)
+        return vol_normal
+
+    if final_clip.audio:
+        try:
+            from moviepy.editor import CompositeAudioClip
+            original = final_clip.audio
+            ducked_audio = original.volumex(volume_func)
+            music_cfg = BRAND.get("music", {})
+            if music_cfg.get("default_track"):
+                music_path = PATHS["music"] / Path(music_cfg["default_track"]).name
+                if music_path.exists():
+                    from moviepy.audio.fx.all import audio_loop
+                    music = AudioFileClip(str(music_path))
+                    if music.duration < final_clip.duration:
+                        music = audio_loop(music, duration=final_clip.duration)
+                    else:
+                        music = music.subclip(0, final_clip.duration)
+                    music_vol = 10 ** (BRAND["music"]["volume_normal"] / 20)
+                    ducked_music = music.volumex(lambda t: volume_func(t) * music_vol / vol_normal)
+                    fade_out_sec = BRAND["music"].get("fade_out_seconds", 3)
+                    if fade_out_sec > 0:
+                        ducked_music = ducked_music.audio_fadeout(fade_out_sec)
+                    final_clip = final_clip.set_audio(CompositeAudioClip([ducked_audio, ducked_music]))
+                    logger.info("Applied music ducking under speech")
+                    return final_clip
+            final_clip = final_clip.set_audio(ducked_audio)
+            logger.info("Applied audio ducking (no music bed)")
+        except Exception as e:
+            logger.warning(f"Ducking failed: {e}")
+
+    return final_clip
+
+
 def _normalize_audio(output_path):
     logger.info("Normalizing audio loudness to -14 LUFS...")
     temp_path = output_path.parent / f"{output_path.stem}_normalized{output_path.suffix}"
@@ -1288,18 +1726,29 @@ def _create_web_media_clip(path: Path, duration: float):
 
 def _create_text_watermark_clip(video):
     try:
-        clip = TextClip(
-            BRAND["brand"]["name"],
-            fontsize=max(18, video.h // 32),
-            font="Arial",
-            color="white",
-            method="label",
-        ).set_duration(video.duration).set_start(0)
         watermark_cfg = BRAND.get("watermark", {})
-        clip = clip.set_opacity(watermark_cfg.get("opacity", 0.1))
+        brand_name = BRAND["brand"]["name"]
+        opacity = watermark_cfg.get("opacity", 0.1)
         margin = watermark_cfg.get("margin", 20)
         position = watermark_cfg.get("position", "bottom-right")
-        return [_apply_position(clip, video, position, margin)]
+
+        font_size = max(18, video.h // 32)
+        font = _load_font_safe(Path("C:/Windows/Fonts/arial.ttf"), font_size)
+
+        canvas = Image.new("RGBA", (video.w, video.h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        bbox = draw.textbbox((0, 0), brand_name, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        text_img = Image.new("RGBA", (tw + 4, th + 4), (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_img)
+        text_draw.text((2, 2), brand_name, fill=(255, 255, 255, int(255 * opacity)), font=font)
+
+        img_path = PATHS["temp"] / "watermark_text.png"
+        text_img.save(str(img_path))
+
+        clip = ImageClip(str(img_path)).set_duration(video.duration).set_start(0)
+        clip = _apply_position(clip, video, position, margin)
+        return [clip]
     except Exception as e:
         logger.warning(f"Text watermark fallback failed: {e}")
         return []
@@ -1326,3 +1775,201 @@ def _entry_token(entry_id) -> str:
         return f"{int(entry_id):03d}"
     except (TypeError, ValueError):
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(entry_id))
+
+
+def _create_progress_bar(video, timeline_data, draft):
+    if not timeline_data:
+        return []
+
+    chapters = []
+    if "seo" in timeline_data and "chapters" in timeline_data.get("seo", {}):
+        chapters = timeline_data["seo"]["chapters"]
+
+    if not chapters:
+        return []
+
+    bar_height = 4
+    bar_y = 0
+    bar_w = video.w
+    total_duration = video.duration
+
+    bar_bg = ColorClip((bar_w, bar_height), color=(26, 115, 232, 80), ismask=False).set_duration(total_duration).set_start(0).set_position(("center", bar_y))
+
+    clips = [bar_bg]
+
+    for ch in chapters:
+        ch_start = _time_to_sec(ch.get("time", "00:00:00"))
+        next_idx = chapters.index(ch) + 1
+        if next_idx < len(chapters):
+            ch_end = _time_to_sec(chapters[next_idx].get("time", "00:00:00"))
+        else:
+            ch_end = total_duration
+
+        ch_duration = ch_end - ch_start
+        if ch_duration <= 0:
+            continue
+
+        ch_w = int(bar_w * (ch_duration / total_duration))
+        ch_x = int(bar_w * (ch_start / total_duration))
+
+        segment = ColorClip((max(ch_w, 1), bar_height), color=(232, 115, 74, 150), ismask=False)
+        segment = segment.set_duration(ch_duration).set_start(ch_start)
+        segment = segment.set_position((ch_x, bar_y))
+        clips.append(segment)
+
+    logger.info(f"Created progress bar with {len(chapters)} chapters")
+    return clips
+
+
+def _wrap_intro_outro(final_clip, timeline_data, draft):
+    intro_cfg = BRAND.get("intro", {})
+    outro_cfg = BRAND.get("outro", {})
+
+    intro_enabled = intro_cfg.get("enabled", False)
+    outro_enabled = outro_cfg.get("enabled", False)
+
+    if not intro_enabled and not outro_enabled:
+        return final_clip
+
+    seo_data = timeline_data.get("seo", {}) if timeline_data else {}
+    video_title = seo_data.get("title", BRAND["brand"]["name"])
+
+    parts = []
+
+    if intro_enabled:
+        intro_dur = intro_cfg.get("duration", 3)
+        try:
+            intro_clip = _build_intro_clip(final_clip, video_title, intro_dur, draft)
+            if intro_clip:
+                parts.append(intro_clip)
+                logger.info(f"Built intro clip ({intro_dur}s)")
+        except Exception as e:
+            logger.warning(f"Intro clip failed: {e}")
+
+    parts.append(final_clip)
+
+    if outro_enabled:
+        outro_dur = outro_cfg.get("duration", 8)
+        try:
+            outro_clip = _build_outro_clip(video_title, outro_dur, draft)
+            if outro_clip:
+                parts.append(outro_clip)
+                logger.info(f"Built outro clip ({outro_dur}s)")
+        except Exception as e:
+            logger.warning(f"Outro clip failed: {e}")
+
+    if len(parts) > 1:
+        try:
+            wrapped = concatenate_videoclips(parts, method="compose")
+            logger.info(f"Wrapped video with intro/outro: total {wrapped.duration:.1f}s")
+            return wrapped
+        except Exception as e:
+            logger.warning(f"Intro/outro concatenation failed: {e}")
+
+    return final_clip
+
+
+def _build_intro_clip(video, title, duration, draft):
+    w, h = video.size
+    target_w, target_h = (DRAFT_RESOLUTION if draft else (w, h))
+
+    bg_frame = video.get_frame(0)
+    bg_img = Image.fromarray(bg_frame).resize((target_w, target_h), Image.LANCZOS)
+    bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=int(BRAND.get("intro", {}).get("blur_radius", 20))))
+    bg_img = bg_img.point(lambda p: int(p * 0.4))
+
+    canvas = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    bg_img_rgba = bg_img.convert("RGBA")
+    canvas = Image.alpha_composite(canvas, bg_img_rgba)
+
+    overlay = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 120))
+    canvas = Image.alpha_composite(canvas, overlay)
+
+    draw = ImageDraw.Draw(canvas)
+
+    intro_cfg = BRAND.get("intro", {})
+    text_color = _hex_to_rgb(intro_cfg.get("text_color", "#FFFFFF"))
+    accent_color = _hex_to_rgb(intro_cfg.get("accent_color", "#E8734A"))
+
+    font_size = 56 if not draft else 28
+    font = _load_font_safe(PATHS["fonts"] / BRAND["fonts"].get("text_card", "Poppins-Bold.ttf"), font_size)
+
+    bbox = draw.textbbox((0, 0), title, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+
+    tx = (target_w - tw) // 2
+    ty = (target_h - th) // 2
+
+    accent_y = ty + th + 16
+    draw.rectangle([(tx, accent_y), (tx + tw, accent_y + 3)], fill=accent_color + (255,))
+
+    draw.text((tx, ty), title, fill=text_color + (255,), font=font)
+
+    img_path = PATHS["temp"] / "intro_frame.png"
+    canvas.convert("RGB").save(img_path)
+
+    clip = ImageClip(str(img_path)).set_duration(duration)
+    clip = clip.crossfadein(0.5).crossfadeout(0.5)
+    return clip
+
+
+def _build_outro_clip(title, duration, draft):
+    target_w, target_h = DRAFT_RESOLUTION if draft else (1920, 1080)
+
+    outro_cfg = BRAND.get("outro", {})
+    bg_hex = outro_cfg.get("bg_color", "#0D1B2A")
+    text_hex = outro_cfg.get("text_color", "#FFFFFF")
+    accent_hex = outro_cfg.get("accent_color", "#E8734A")
+    sub_hex = outro_cfg.get("subtext_color", "#CBD5E1")
+
+    canvas = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    bg_rgb = _hex_to_rgb(bg_hex)
+    draw.rectangle([(0, 0), (target_w, target_h)], fill=bg_rgb + (255,))
+
+    text_rgb = _hex_to_rgb(text_hex)
+    accent_rgb = _hex_to_rgb(accent_hex)
+    sub_rgb = _hex_to_rgb(sub_hex)
+
+    name_font = _load_font_safe(PATHS["fonts"] / BRAND["fonts"].get("text_card", "Poppins-Bold.ttf"), 52 if not draft else 26)
+    sub_font = _load_font_safe(PATHS["fonts"] / BRAND["fonts"].get("lower_third", "Poppins-SemiBold.ttf"), 28 if not draft else 14)
+    phone_font = _load_font_safe(PATHS["fonts"] / BRAND["fonts"].get("subtitle", "Poppins-Medium.ttf"), 36 if not draft else 18)
+
+    brand_name = BRAND["brand"]["name"]
+    tagline = BRAND["brand"]["tagline"]
+    phone = BRAND["brand"]["phone"]
+    clinic = BRAND["brand"]["clinic"]
+
+    name_bbox = draw.textbbox((0, 0), brand_name, font=name_font)
+    name_w = name_bbox[2] - name_bbox[0]
+    draw.text(((target_w - name_w) // 2, target_h // 2 - 100), brand_name, fill=text_rgb + (255,), font=name_font)
+
+    tagline_bbox = draw.textbbox((0, 0), tagline, font=sub_font)
+    tagline_w = tagline_bbox[2] - tagline_bbox[0]
+    draw.text(((target_w - tagline_w) // 2, target_h // 2 - 30), tagline, fill=sub_rgb + (255,), font=sub_font)
+
+    accent_y = target_h // 2 + 10
+    draw.rectangle([(target_w // 2 - 60, accent_y), (target_w // 2 + 60, accent_y + 3)], fill=accent_rgb + (255,))
+
+    phone_bbox = draw.textbbox((0, 0), phone, font=phone_font)
+    phone_w = phone_bbox[2] - phone_bbox[0]
+    draw.text(((target_w - phone_w) // 2, accent_y + 20), phone, fill=accent_rgb + (255,), font=phone_font)
+
+    clinic_bbox = draw.textbbox((0, 0), clinic, font=sub_font)
+    clinic_w = clinic_bbox[2] - clinic_bbox[0]
+    draw.text(((target_w - clinic_w) // 2, accent_y + 70), clinic, fill=sub_rgb + (255,), font=sub_font)
+
+    cta_y = target_h - 120
+    cta_text = "Subscribe for more health tips!"
+    cta_bbox = draw.textbbox((0, 0), cta_text, font=sub_font)
+    cta_w = cta_bbox[2] - cta_bbox[0]
+    draw.text(((target_w - cta_w) // 2, cta_y), cta_text, fill=text_rgb + (255,), font=sub_font)
+
+    img_path = PATHS["temp"] / "outro_frame.png"
+    canvas.convert("RGB").save(img_path)
+
+    clip = ImageClip(str(img_path)).set_duration(duration)
+    clip = clip.crossfadein(0.5).crossfadeout(1.0)
+    return clip

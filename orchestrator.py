@@ -6,11 +6,10 @@ import time
 import logging
 from pathlib import Path
 
-os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-
 from config import (
     PATHS,
     PROGRESS_FILE,
+    BRAND,
     ensure_dirs,
     clean_temp_for_video,
     setup_logging,
@@ -61,6 +60,7 @@ def run_pipeline(
     model_name=None,
     interactive=True,
     skip_check=False,
+    trim_silence=False,
 ):
     logger = setup_logging()
     ensure_dirs()
@@ -156,17 +156,34 @@ def run_pipeline(
         progress["current_phase"] = 1.5
         save_progress(progress)
 
-        words_path = PATHS["temp"] / f"{video_name}_words.json"
-        if words_path.exists() and duration_sec > 0:
-            silence_result = detect_silence(words_path, duration_sec)
-            silence_cuts = silence_result.get("silence_cuts", [])
+        silence_cfg = BRAND.get("silence", {})
+        silence_enabled = trim_silence or silence_cfg.get("enabled", False)
 
-            if srt_path and srt_path.exists() and silence_cuts:
-                trimmed_srt_path = adjust_srt_for_silence(srt_path, silence_cuts)
+        if silence_enabled:
+            words_path = PATHS["temp"] / f"{video_name}_words.json"
+            if words_path.exists() and duration_sec > 0:
+                import config as cfg
+                old_threshold = cfg.SILENCE_THRESHOLD_MS
+                if trim_silence:
+                    cfg.SILENCE_THRESHOLD_MS = 0
+
+                silence_result = detect_silence(words_path, duration_sec)
+                silence_cuts = silence_result.get("silence_cuts", [])
+
+                if trim_silence and silence_cuts:
+                    logger.info(f"Trim-silence mode: {len(silence_cuts)} silence gaps will be cut")
+
+                cfg.SILENCE_THRESHOLD_MS = old_threshold
+
+                if srt_path and srt_path.exists() and silence_cuts:
+                    trimmed_srt_path = adjust_srt_for_silence(srt_path, silence_cuts)
+                else:
+                    trimmed_srt_path = srt_path
             else:
+                logger.warning("No word-level data available, skipping silence detection")
                 trimmed_srt_path = srt_path
         else:
-            logger.warning("No word-level data available, skipping silence detection")
+            logger.info("Silence trimming disabled (use --trim-silence to enable)")
             trimmed_srt_path = srt_path
 
         mark_completed(progress, 1.5)
@@ -367,6 +384,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="Run setup preflight checks and exit")
     parser.add_argument("--skip-check", action="store_true", help="Skip preflight checks before running")
     parser.add_argument("--no-interactive", action="store_true", help="Do not prompt for model selection; use --model, .env, or first listed model")
+    parser.add_argument("--trim-silence", action="store_true", help="Enable silence trimming with safety guards")
 
     args = parser.parse_args()
 
@@ -407,6 +425,7 @@ def main():
         model_name=args.model,
         interactive=not args.no_interactive,
         skip_check=args.skip_check,
+        trim_silence=args.trim_silence,
     )
 
 
